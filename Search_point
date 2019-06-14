@@ -86,6 +86,7 @@ class caculate_Points
         inline double To_caculate_curve(const double path_x[],const double path_y[]);
         void draw_txt_init();
         inline void draw_txt(int id,double x,double y,string s,double num,ros::Publisher pub);
+        inline void estimate_mode(double curve);
         ofstream fout,fout_c;
 
         visualization_msgs::Marker visual_txt,visual_txt2,marker_pub3,marker_pub4;
@@ -97,6 +98,8 @@ class caculate_Points
         double k_v ;   //速度权重
         double k_sigma;  //曲率权重
         float dis_yuan = 1;
+        int mode = 0; //道路类型
+        double curve_zhidao = 0,curve_danwan = 0;
 
     private:
         ros::NodeHandle n_;
@@ -738,14 +741,14 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
         std::cout<<"waha!"<<std::endl;
         //std::cout<<"path_k.sum() = "<<path_k.sum()<<std::endl;
         // 3m
-        path_c_av.conservativeResize(c_j);  //平均曲率
-        path_c_av = path_c_av/path_c_av.size();
+        path_c_av.conservativeResize(c_j);  //全部曲率
+        //path_c_av = path_c_av/path_c_av.size();
         cout<<"path_c_av.size() = "<<path_c_av.size()<<endl;
         double c_av = path_c_av.sum();
         cout<<"path_c_av = "<<c_av<<endl;
         //1m
         path_c_turn_av.conservativeResize(c_turn_j);
-        path_c_turn_av = path_c_turn_av/path_c_turn_av.size();
+        //path_c_turn_av = path_c_turn_av/path_c_turn_av.size();
         double c_turn_av = path_c_turn_av.sum();
         cout<<"path_c_turn_av = "<<c_turn_av<<endl;
 
@@ -767,22 +770,23 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
         curve_av_pub.publish(c_av_to); 
 
         // 输入3m+1m曲率，返回道路类型
+        estimate_mode(c_av);
         // 根据道路类型调整前瞻
-        // switch(mode)
-        // {
-        //     //直道
-        //     case 1:
-        //     dis_yuan_mode = dis_yuan;
-        //     k_dis_yuan_mode = k_dis_yuan;
-        //     break;
-        //     //点阵
-        //     case 2:
-        //     dis_yuan_mode = 1;
-        //     k_dis_yuan_mode = 0;
-        //     break;
-        // }
-        // string str = "the mode = ";
-        // draw_txt(3,car_odom_x,car_odom_y,str,mode,marker_pub);
+        switch(mode)
+        {
+            //直道 初始
+            case 1: case 0:
+            dis_yuan_mode = dis_yuan;
+            k_dis_yuan_mode = k_dis_yuan;
+            break;
+            //点阵
+            case 3:
+            dis_yuan_mode = 1;
+            k_dis_yuan_mode = 0;
+            break;
+        }
+        str = "the mode = ";
+        draw_txt(3,car_odom_x,car_odom_y,str,mode,marker_pub);
     
 
         if(path_k.sum() == 1)
@@ -825,7 +829,24 @@ inline double caculate_Points::To_caculate_curve(const double path_x[],const dou
     double path_c = 2 * path_S_2 / (path_L_1_pow * path_L_2_pow * path_L_3_pow);
     return path_c;
 }
-
+inline void caculate_Points::estimate_mode(double curve)
+{
+    if(curve < curve_zhidao)
+    {
+        //直道
+        mode = 1;
+    }
+    else if(curve < curve_danwan)
+    {
+        //单弯道
+        mode = 2;
+    }
+    else 
+    {
+        //点阵
+        mode = 3;
+    }
+}
 inline void caculate_Points::draw_txt(int id,double x,double y,string s,double num,ros::Publisher pub)
 {
   visualization_msgs::Marker visual_temp;
