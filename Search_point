@@ -96,7 +96,7 @@ class caculate_Points
         double k_dis_yuan;
         double k_v ;   //速度权重
         double k_sigma;  //曲率权重
-        float dis_yuan = 0;
+        float dis_yuan = 1;
 
     private:
         ros::NodeHandle n_;
@@ -498,23 +498,7 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
     }
     pub_forword_point.publish(Forword_path_point);//发布前瞻选取的路径点
     //
-    /*
-     double car_x = carPose_pos.x;
-    double car_y = carPose_pos.y;
-    double path_x = Forword_path_point.poses[0].pose.position.x;
-    double path_y = Forword_path_point.poses[0].pose.position.y;
-    double dis = pow(pow((car_x-path_x),2) + pow((car_y-path_y),2),0.5);
-    geometry_msgs::Pose pose;
-    pose.position.x = path_x;
-    pose.position.y = path_y;
-    pose.position.z = 1;
-    ostringstream str;
-    str<<"the path_dis_! = "<<dis;
-    visual_txt.text=str.str();
-    visual_txt.pose = pose;
-    //marker_pub.publish(visual_txt);
-    */
-
+   
 
     // int size2 = Forword_path_point.poses.size();
     Eigen::VectorXd path_k_(times);
@@ -524,18 +508,6 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
     ROS_INFO("Forword_path_point:%ld",Forword_path_point.poses.size());
     // ROS_INFO("every_point_yaw.dot(path_k_):%lf",every_point_yaw.dot(path_k_));
     // ROS_INFO("times:%d",times);
-    /*
-    double yaw_wight = every_point_yaw.dot(path_k_);
-    //geometry_msgs::Pose pose;
-    pose.position.x = Forword_path_point.poses[10].pose.position.x;
-    pose.position.y = Forword_path_point.poses[10].pose.position.y;
-    pose.position.z = 1;
-    //ostringstream str;
-    str<<"the yaw = "<<yaw_wight*180/M_PI;
-    marker_pub4.text=str.str();
-    marker_pub4.pose = pose;
-    //marker_pub.publish(marker_pub4);
-    */
     return every_point_yaw.dot(path_k_);
 
 }
@@ -716,6 +688,9 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
         int c_j = 0,c_turn_j = 0;
         Eigen::VectorXd path_c_av(size); 
         Eigen::VectorXd path_c_turn_av(size);
+        float dis_yuan_mode = 0;
+        double k_dis_yuan_mode = 0;
+
         for(int i = 0;i<size;i++)
         {
             path_x = map_path.poses[i].pose.position.x;
@@ -744,9 +719,10 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
                 }
 
             }
-            if(dis > dis_yuan)
+            
+            if(dis > dis_yuan_mode)
             {
-                path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
+                path_k(i) = k_dis_yuan_mode * 1/dis + k_sigma * curve;
                 //std::cout<<"2m!!!!!!"<<std::endl;
             }
             else
@@ -789,32 +765,25 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
         c_av_to.data = c_av;
         c_turn_av_to.data = c_turn_av;
         curve_av_pub.publish(c_av_to); 
-        curve_av_turn_pub.publish(c_turn_av_to);
 
-        /*
-        geometry_msgs::Pose pose;
-        pose.position.x = map_path.poses[0].pose.position.x;
-        pose.position.y = map_path.poses[0].pose.position.y;
-        pose.position.z = 1;
-        ostringstream str;
-        str<<"the path_c_av = "<<c_av;
-        visual_txt.text=str.str();
-        visual_txt.pose = pose;
-        marker_pub.publish(visual_txt);
-
-        std_msgs::Float64 c_av_to;
-        curcature = c_av_to.data = c_av;
-        curve_av_pub.publish(c_av_to);
-        
-        pose.position.x = map_path.poses[5].pose.position.x;
-        pose.position.y = map_path.poses[5].pose.position.y;
-        pose.position.z = 1;
-
-        str<<" Lfw = "<<Lfw;
-        visual_txt2.text=str.str();
-        visual_txt2.pose = pose;
-        marker_pub.publish(visual_txt2);
-        */
+        // 输入3m+1m曲率，返回道路类型
+        // 根据道路类型调整前瞻
+        // switch(mode)
+        // {
+        //     //直道
+        //     case 1:
+        //     dis_yuan_mode = dis_yuan;
+        //     k_dis_yuan_mode = k_dis_yuan;
+        //     break;
+        //     //点阵
+        //     case 2:
+        //     dis_yuan_mode = 1;
+        //     k_dis_yuan_mode = 0;
+        //     break;
+        // }
+        // string str = "the mode = ";
+        // draw_txt(3,car_odom_x,car_odom_y,str,mode,marker_pub);
+    
 
         if(path_k.sum() == 1)
         {
