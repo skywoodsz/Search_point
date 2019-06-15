@@ -1,0 +1,71 @@
+flag: True          #True代表根据前瞻距离自动计算,false代表手动设置
+
+num: 50             #手动模式设置的采样点数
+
+step: 1             #采样点步长,通俗来说就是隔多少个点取下一个点
+forword_distance: 1 #前瞻距离
+
+Lfw: 0.5          #用于选取小车前面离小车的距离大于等于Lfw的路径点，用来计算转角
+
+auto_PID_param: False      #开启自动调节PID参数，根据速度变化
+steer_Kp: 1.2       #转角kp值   3.5  1.5~0.5
+steer_Td: 0.0         #转角Td值
+T: 0.002            #实际角度采样周期
+steer_v: 1.8        #转角低速运行的参数
+
+# eta_weight_flag: False #暂时认为这个不开启更好
+# eta_weight: 4       #转角的放大系数
+# stright_eta_max: 8  #小于这个值认为是弯道，无需加大转角
+# turning_eta: 20     #转角eta大于前面的stright_eta_max，且小于turning_eta认为有弯道，并认此时舵机打不过来
+
+k_dis: 1            #距离权重
+k_dis_yuan: 100
+k_v: 0              #速度权重
+k_sigma: 0          #曲率权重
+
+
+
+
+
+
+
+
+
+#以下参数属于blurred_PID节点
+
+Bang_bang_flag: True #是否开启棒棒控制
+
+base_speed_pwm: 1580 #基础速度的占空比
+max_speed_pwm: 1610 #最大速度的占空比
+medium_speed_pwm: 1590 #中等运行速度
+start_speed_pwm: 1580 #开始运行的速度
+
+max_speed: 3.2        #最大运行速度
+medium_speed: 2.5    #中等运行速度
+min_speed: 1.8       #最小运行速度
+threshold_speed: 0.5 #正负相差0.3m/s内开始调节
+
+blurred_flag: False #是否开启模糊速度PID
+v_kp: 10             #基础速度PID的Kp系数
+v_Td: 0             #基础速度PID的Td系数
+
+min_curcature: 1        #高速运行的最小曲率
+medium_curcature: 1.5   #低速运行的最大曲率
+max_curcature: 2        #判断为点阵的最大曲率
+
+
+
+
+
+
+
+#kp:2.4   td:0.1   T:0.002   1570   点阵   forword:0.5~1.2
+#kp:1.0   td:0.5  T:0.002  1585  直道少桶   forword:0.5~3  k_dis_yuan:100  当偏角大于20度，在此基础上再加10度  不能保证所有桶都过
+
+
+
+
+#以下为新调的
+#精准过点阵 kp:2.0,Td:0,pwm=1570   forword:0.5  k_dis_yuan:100  lfw:0.4  大于>30度   小于<-20度  棒棒参数 最大45度
+
+#中低速无障碍物 kp:1.2  td:0.0  T:0.002  1585  forword:0.5~3  lfw:0.5
