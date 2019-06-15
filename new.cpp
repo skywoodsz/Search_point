@@ -223,18 +223,18 @@ void caculate_Points::caculate_average_yaw(const ros::TimerEvent&)
 
    
 
-    // if(eta*180/M_PI > 30)
-    // {
-    //     eta += 45*M_PI/180;
-    // }
-    // else if(eta*180/M_PI < -20)
-    // {
-    //     eta -= 45*M_PI/180;
-    // }
+    if(eta*180/M_PI > 30)
+    {
+        eta += 45*M_PI/180;
+    }
+    else if(eta*180/M_PI < -20)
+    {
+        eta -= 45*M_PI/180;
+    }
 
-     string str = "the yaw = ";
-        draw_txt(0,car_pose.pose.pose.position.x,
-            car_pose.pose.pose.position.y,str,eta*180/M_PI,marker_pub);
+    //  string str = "the yaw = ";
+    //     draw_txt(0,car_pose.pose.pose.position.x,
+    //         car_pose.pose.pose.position.y,str,eta*180/M_PI,marker_pub);
 
     eta = PID_control(eta);//计算出来的实际该给的角度值
     // pub_cmd_vel.publish(cmd_vel);
@@ -501,8 +501,8 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
             //     ROS_INFO("distance:%lf",sqrt((odom_path_wayPt.x-carPose_pos.x)*(odom_path_wayPt.x-carPose_pos.x)+(odom_path_wayPt.y-carPose_pos.y)*(odom_path_wayPt.y-carPose_pos.y)));
             // }
 
-            // odom_car2WayPtVec.x = cos(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + sin(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
-            // odom_car2WayPtVec.y = -sin(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + cos(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
+            odom_car2WayPtVec.x = cos(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + sin(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
+            odom_car2WayPtVec.y = -sin(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + cos(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
             // yaw_one_time = atan2(odom_car2WayPtVec.y,odom_car2WayPtVec.x);
             // yaw_all += yaw_one_time;
 
@@ -514,9 +514,6 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
             if(all_distance < forword_distance_ahead)
             {
                 Forword_path_point_ahead.poses.push_back(odom_path_pose);
-
-                odom_car2WayPtVec.x = cos(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + sin(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
-                odom_car2WayPtVec.y = -sin(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + cos(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
                 yaw_one_time = atan2(odom_car2WayPtVec.y,odom_car2WayPtVec.x);
                 every_point_yaw(times) = yaw_one_time;       
                 times++;
@@ -802,8 +799,8 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
     //nav_msgs::Path map_path = local_path;
     int size = map_path.poses.size();
     int size_k = Forword_path_point_ahead.poses.size();
-    Eigen::VectorXd path_k(size); //权重 
-    Eigen::VectorXd path_k_dis(size); 
+    Eigen::VectorXd path_k(size_k); //权重 
+    Eigen::VectorXd path_k_dis(size_k); 
     if(size != 0)
     {
         double path_x,path_y; // 路径xy
@@ -845,30 +842,30 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
 
             }
             
-            if(dis > dis_yuan)
-            {
-                path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
-                //std::cout<<"2m!!!!!!"<<std::endl;
-            }
-            else
-            {
-                path_k(i) = k_dis * 1/dis + k_sigma * curve;
-            }
-            path_k_dis(i) = dis_true;
-
-            // if(i<size_k-1)
+            // if(dis > dis_yuan)
             // {
-            //     if(dis > dis_yuan)
-            //     {
-            //         path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
-            //         //std::cout<<"2m!!!!!!"<<std::endl;
-            //     }
-            //     else
-            //     {
-            //         path_k(i) = k_dis * 1/dis + k_sigma * curve;
-            //     }
-            //     path_k_dis(i) = dis_true;    
+            //     path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
+            //     //std::cout<<"2m!!!!!!"<<std::endl;
             // }
+            // else
+            // {
+            //     path_k(i) = k_dis * 1/dis + k_sigma * curve;
+            // }
+            // path_k_dis(i) = dis_true;
+
+            if(i<size_k-1)
+            {
+                if(dis > dis_yuan)
+                {
+                    path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
+                    //std::cout<<"2m!!!!!!"<<std::endl;
+                }
+                else
+                {
+                    path_k(i) = k_dis * 1/dis + k_sigma * curve;
+                }
+                path_k_dis(i) = dis_true;    
+            }
         }
             
         //归一化
