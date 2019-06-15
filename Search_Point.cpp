@@ -52,6 +52,7 @@ class caculate_Points
 
         double curcature;//前方曲率大小
         double forword_distance;//前瞻距离
+        double forword_distance_ahead;//近处路径距离
         bool flag;//True代表根据前瞻距离自动计算,false代表手动设置
 
         double Lfw,Vcmd;
@@ -102,7 +103,7 @@ class caculate_Points
     private:
         ros::NodeHandle n_;
         ros::Subscriber sub_path_point,sub_car_pos,goal_sub,sub_linear_x;
-        ros::Publisher pub_forword_point,pub_forward_eta,pub_global_path,pub_target_point,pub_cmd_vel;
+        ros::Publisher pub_forword_point,pub_forward_eta,pub_global_path,pub_target_point,pub_cmd_vel,forword_distance_ahead_pub;;
         ros::Timer timer1,timer2;
 
         tf::TransformListener listener;
@@ -111,6 +112,7 @@ class caculate_Points
         nav_msgs::Path global_path;
         nav_msgs::Odometry car_pose;//用于接收小车位姿
         nav_msgs::Path Forword_path_point;//用于发布前瞻的路径点
+        nav_msgs::Path Forword_path_point_ahead;//用于发布前瞻的路径点
         
         /*以下为未经修改的变量*/
         geometry_msgs::Point forwardPt;
@@ -174,6 +176,8 @@ caculate_Points::caculate_Points()//相关参数的初始化
     // pub_cmd_vel = p.advertise<geometry_msgs::Twist>("/car/cmd_vel",1);
     // pub_target_point = p.advertise<visualization_msgs::Marker>("car_path", 10);//发布~
     pub_forword_point = p.advertise<nav_msgs::Path>("/forword_point", 1);
+    forword_distance_ahead_pub = p.advertise<nav_msgs::Path>("/forword_point_ahead",1);
+
     pub_forward_eta = p.advertise<std_msgs::Float64>("/forword_eta", 1);
     //pub_global_path = p.advertise<nav_msgs::Path>("/global_path",1);
 
@@ -208,7 +212,7 @@ void caculate_Points::caculate_average_yaw(const ros::TimerEvent&)
     geometry_msgs::Pose carPose = car_pose.pose.pose;
 
     double eta = getEtas(carPose);
-    if(eta_weight_flag)
+s    if(eta_weight_flag)
     {
         if(abs(eta*180/M_PI) > stright_eta_max && abs(eta*180/M_PI) < turning_eta)
         {
@@ -224,7 +228,7 @@ void caculate_Points::caculate_average_yaw(const ros::TimerEvent&)
     //     eta += 45*M_PI/180;
     // }
     // else if(eta*180/M_PI < -20)
-    // {
+s    // {
     //     eta -= 45*M_PI/180;
     // }
 
@@ -323,7 +327,7 @@ void caculate_Points::goalCB(const geometry_msgs::PoseStamped::ConstPtr& goalMsg
         ros::Duration(1.0).sleep();
     }
 }
-
+s
 void caculate_Points::receive_vel(const std_msgs::Float64 vel)
 {
     cmd_vel.linear.x = vel.data;
@@ -343,7 +347,7 @@ double caculate_Points::getEtas(const geometry_msgs::Pose& carPose)
     //     forwardPt = first_point;
     // }
     // points.points.clear();
-    // line_strip.points.clear();
+s    // line_strip.points.clear();
     // if(foundForwardPt && !goal_reached)
     // {
     //     points.points.push_back(carPose.position);
@@ -473,6 +477,9 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
 
     Forword_path_point.poses.clear();
     Forword_path_point.header = car_pose.header;
+    Forword_path_point_ahead.poses.clear();
+    Forword_path_point_ahead.header = car_pose.header;
+
 
     for(int i = first_point_index; i< local_path.poses.size(); i += step)
     {
@@ -498,10 +505,18 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
             yaw_one_time = atan2(odom_car2WayPtVec.y,odom_car2WayPtVec.x);
             // yaw_all += yaw_one_time;
 
-            every_point_yaw(times) = yaw_one_time;       
-            times++;
+            // every_point_yaw(times) = yaw_one_time;       
+            // times++;
 
             all_distance += sqrt((odom_path_wayPt.x-last_path_point.x)*(odom_path_wayPt.x-last_path_point.x) + (odom_path_wayPt.y-last_path_point.y)*(odom_path_wayPt.y-last_path_point.y));
+            
+            if(all_distance < forword_distance_ahead)
+            {
+                Forword_path_point_ahead.poses.push_back(odom_path_pose);
+                every_point_yaw(times) = yaw_one_time;       
+                times++;
+            }
+            
             if(all_distance >= forword_distance)break;
             last_path_point = odom_path_wayPt;
         }
@@ -513,6 +528,9 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
         
     }
     pub_forword_point.publish(Forword_path_point);//发布前瞻选取的路径点
+    forword_distance_ahead_pub.publish(Forword_path_point_ahead);
+
+
     //
     /*
      double car_x = carPose_pos.x;
@@ -777,8 +795,9 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
     map_jin_path.header = Forword_path_point.header;
     //nav_msgs::Path map_path = local_path;
     int size = map_path.poses.size();
-    Eigen::VectorXd path_k(size); //权重 
-    Eigen::VectorXd path_k_dis(size); 
+    int size_k = Forword_path_point_ahead.poses.size();
+    Eigen::VectorXd path_k(size_k); //权重 
+    Eigen::VectorXd path_k_dis(size_k); 
     if(size != 0)
     {
         double path_x,path_y; // 路径xy
@@ -819,16 +838,30 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
                 }
 
             }
-            if(dis > dis_yuan)
+            
+            // if(dis > dis_yuan)
+            // {
+            //     path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
+            //     //std::cout<<"2m!!!!!!"<<std::endl;
+            // }
+            // else
+            // {
+            //     path_k(i) = k_dis * 1/dis + k_sigma * curve;
+            // }
+            // path_k_dis(i) = dis_true;
+            if(i<size_k-1)
             {
-                path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
-                //std::cout<<"2m!!!!!!"<<std::endl;
+                if(dis > dis_yuan)
+                {
+                    path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
+                    //std::cout<<"2m!!!!!!"<<std::endl;
+                }
+                else
+                {
+                    path_k(i) = k_dis * 1/dis + k_sigma * curve;
+                }
+                path_k_dis(i) = dis_true;    
             }
-            else
-            {
-                path_k(i) = k_dis * 1/dis + k_sigma * curve;
-            }
-            path_k_dis(i) = dis_true;
         }
             
         //归一化
@@ -853,12 +886,12 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
         
         // 可视化
         string str = "the path_c_av = ";
-        //draw_txt(1,map_path.poses[0].pose.position.x,
-            //map_path.poses[0].pose.position.y,str,c_av,marker_pub);
+        draw_txt(1,map_path.poses[0].pose.position.x,
+            map_path.poses[0].pose.position.y,str,c_av,marker_pub);
 
         str = "the c_turn_av = ";
-        //draw_txt(2,map_path.poses[10].pose.position.x,
-            //map_path.poses[10].pose.position.y,str,c_turn_av,marker_pub);
+        draw_txt(2,map_path.poses[10].pose.position.x,
+            map_path.poses[10].pose.position.y,str,c_turn_av,marker_pub);
 
         std_msgs::Float64 c_av_to,c_turn_av_to;
         c_av_to.data = c_av;
@@ -1001,7 +1034,7 @@ int main(int argc, char *argv[])
     int step;
     int num;
     bool flag;
-    double forword_distance;
+    double forword_distance,forword_distance_ahead;
     double Lfw;
     double steer_Kp,steer_Td,T;//转角PID系数中间值
     bool auto_PID_param;
@@ -1022,6 +1055,7 @@ int main(int argc, char *argv[])
     n.getParam("/Search/steer_Td",steer_Td);
     n.getParam("/Search/T",T);
     n.getParam("/Search/auto_PID_param",auto_PID_param);
+    n.getParam("/Search/forword_distance_ahead",forword_distance_ahead);
     // n.getParam("/Search/eta_weight",eta_weight);
     // n.getParam("/Search/stright_eta_max",stright_eta_max);
     // n.getParam("/Search/turning_eta",turning_eta);    
@@ -1041,6 +1075,7 @@ int main(int argc, char *argv[])
     task.steering_PID.Td = steer_Td;
     task.steering_PID.T = T;
     task.auto_PID_param = auto_PID_param;
+    task.forword_distance_ahead = forword_distance_ahead;
     // task.eta_weight = eta_weight;
     // task.stright_eta_max = stright_eta_max;
     // task.turning_eta = turning_eta;
@@ -1055,6 +1090,8 @@ int main(int argc, char *argv[])
     ROS_INFO("num:%d",task.num);
     ROS_INFO("forword_distance:%lf",task.forword_distance);
     ROS_INFO("Lfw:%lf",task.Lfw);
+    ROS_INFO("forword_distance_ahead:%lf",task.forword_distance_ahead);
+
     // ROS_INFO("eta_weight:%lf",task.eta_weight);
     // ROS_INFO("stright_eta_max:%lf",task.stright_eta_max);
     // ROS_INFO("turning_eta:%lf",task.turning_eta);
@@ -1064,5 +1101,6 @@ int main(int argc, char *argv[])
     ros::spin();
     return 0;
 }
+
 
 
