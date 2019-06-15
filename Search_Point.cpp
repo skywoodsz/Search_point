@@ -1,0 +1,1068 @@
+#include "ros/ros.h"
+#include "nav_msgs/Path.h" 
+#include "nav_msgs/Odometry.h"
+#include "geometry_msgs/Pose.h"
+#include <tf/transform_listener.h>
+#include "std_msgs/Float64.h"
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <fstream>
+#include <string> 
+#include <visualization_msgs/Marker.h>
+#include "geometry_msgs/PoseStamped.h"
+#include "geometry_msgs/Point.h"
+#include "geometry_msgs/Twist.h"
+#include <std_msgs/Int32.h>
+using namespace std;
+class caculate_Points
+{
+    public:
+        caculate_Points();//析构函数，初始化声明一些订阅者，发布者
+        void receive_path_point(const nav_msgs::Path::ConstPtr& pathMsg);//接收路径点
+        void receive_odom(const nav_msgs::Odometry::ConstPtr& odomMsg);//接收小车坐标
+        double getEtas(const geometry_msgs::Pose& carPose);//得到应该的转角
+        int find_forword_point(const geometry_msgs::Pose& carPose);//找到小车前面的一个路径点在数组里面的下标值
+        double caculate_average_yaw(unsigned int first_point_index,unsigned int step,unsigned int num,const geometry_msgs::Pose& carPose);//first_point_index代表第一个路径点的数组下标值，step为隔多远取下一个点，num为取多少个点
+        double getYawFromPose(const geometry_msgs::Pose& carPose);//得到小车相对于odom坐标系的航偏角
+        bool isForwardWayPt(const geometry_msgs::Point& wayPt, const geometry_msgs::Pose& carPose);//判断是不是前面的路径点
+        bool isWayPtAwayFromLfwDist(const geometry_msgs::Point& wayPt, const geometry_msgs::Point& car_pos);//判断是否到达那个点
+        double getL1Distance(const double& _Vcmd);
+        void caculate_average_yaw(const ros::TimerEvent&);    
+        double auto_caculate_yaw(unsigned int first_point_index,const geometry_msgs::Pose& carPose);
+        double PID_control(const double Angle_fact);
+        void receive_vel(const std_msgs::Float64 vel);
+
+        /*此小段为未经改动过大的内容*/
+        void goalCB(const geometry_msgs::PoseStamped::ConstPtr& goalMsg);
+        void initMarker();//初始化可视化信息
+        void goalReachingCB(const ros::TimerEvent&);
+        double getCar2GoalDist();
+        bool foundForwardPt;
+        geometry_msgs::Point first_point;
+        /**/
+
+        unsigned int step;//取点的步长
+        unsigned int num;//取多少个点
+        double two_poins_distance;//两点之间的步长
+
+        bool eta_weight_flag;//是否开启转角放大倍数
+        double eta_weight;//转角的放大倍数
+        double stright_eta_max;
+        double turning_eta;
+
+        double curcature;//前方曲率大小
+        double forword_distance;//前瞻距离
+        bool flag;//True代表根据前瞻距离自动计算,false代表手动设置
+
+        double Lfw,Vcmd;
+
+        bool auto_PID_param;//是否开启自动变化的PID
+        typedef struct
+        {
+            double Angle_Target;//要达到的目标位置
+            double current_Angle;//现在的位置
+
+            double Kp;
+            double Ti;
+            double Td;
+            
+            double now_error;
+            double last_error;
+            double pre_error;
+
+            double Angle_output;//增量式PID的输出，为角度的输出
+            uint16_t turn_output;//将角度的输出转化为PWM的输出
+
+            double T;//采样周期
+
+            int i;//设置初始航偏角为小车要保持的位置
+        }steer_PID;//舵机PID相关参数
+        steer_PID steering_PID;
+        geometry_msgs::Twist cmd_vel;
+
+
+        // __anthor__ = skywoodsz
+        Eigen::VectorXd To_caculate_weight();
+        inline double To_caculate_curve(const double path_x[],const double path_y[]);
+        void draw_txt_init();
+        inline void draw_txt(int id,double x,double y,string s,double num,ros::Publisher pub);
+        ofstream fout,fout_c;
+
+        visualization_msgs::Marker visual_txt,visual_txt2,marker_pub3,marker_pub4;
+        ros::Publisher marker_pub,curve_av_pub,marker_pub2,curve_av_turn_pub,path_jin_pub,mode_pub;
+        double c_av,c_turn_av;
+
+        int count = 0;
+        double k_dis; //距离权重
+        double k_dis_yuan;
+        double k_v ;   //速度权重
+        double k_sigma;  //曲率权重
+        float dis_yuan = 1.5;
+
+    private:
+        ros::NodeHandle n_;
+        ros::Subscriber sub_path_point,sub_car_pos,goal_sub,sub_linear_x;
+        ros::Publisher pub_forword_point,pub_forward_eta,pub_global_path,pub_target_point,pub_cmd_vel;
+        ros::Timer timer1,timer2;
+
+        tf::TransformListener listener;
+
+        nav_msgs::Path local_path;//用于接收路径点
+        nav_msgs::Path global_path;
+        nav_msgs::Odometry car_pose;//用于接收小车位姿
+        nav_msgs::Path Forword_path_point;//用于发布前瞻的路径点
+        
+        /*以下为未经修改的变量*/
+        geometry_msgs::Point forwardPt;
+        visualization_msgs::Marker points, line_strip, goal_circle;//Marker是用来发布的
+        geometry_msgs::Point odom_goal_pos;
+        bool goal_received;
+        bool goal_reached;
+        /**/
+};
+
+void caculate_Points::initMarker()
+{
+    points.header.frame_id = line_strip.header.frame_id = goal_circle.header.frame_id = "odom";
+    points.ns = line_strip.ns = goal_circle.ns = "Markers";
+    points.action = line_strip.action = goal_circle.action = visualization_msgs::Marker::ADD;
+    points.pose.orientation.w = line_strip.pose.orientation.w = goal_circle.pose.orientation.w = 1.0;
+    points.id = 0;
+    line_strip.id = 1;
+    goal_circle.id = 2;
+
+    points.type = visualization_msgs::Marker::POINTS;
+    line_strip.type = visualization_msgs::Marker::LINE_STRIP;
+    goal_circle.type = visualization_msgs::Marker::CYLINDER;
+    // POINTS markers use x and y scale for width/height respectively
+    points.scale.x = 0.2;
+    points.scale.y = 0.2;
+
+    //LINE_STRIP markers use only the x component of scale, for the line width
+    line_strip.scale.x = 0.1;
+
+    goal_circle.scale.x = Lfw;
+    goal_circle.scale.y = Lfw;
+    goal_circle.scale.z = 0.1;
+
+    // Points are green,点是绿色的
+    points.color.g = 1.0f;
+    points.color.a = 1.0;
+
+    // Line strip is blue 线条是蓝色的
+    line_strip.color.b = 1.0;
+    line_strip.color.a = 1.0;
+
+    //goal_circle is yellow 目标圆是黄色的
+    goal_circle.color.r = 1.0;
+    goal_circle.color.g = 1.0;
+    goal_circle.color.b = 0.0;
+    goal_circle.color.a = 0.5;
+}
+
+caculate_Points::caculate_Points()//相关参数的初始化
+{
+    ros::NodeHandle p("~");
+
+    // sub_path_point = p.subscribe("/move_base/TrajectoryPlannerROS/local_plan", 1, &caculate_Points::receive_path_point,this);
+    // sub_car_pos = p.subscribe("/odom", 1, &caculate_Points::receive_odom,this);
+
+    sub_path_point = p.subscribe("/move_base/NavfnROS/plan", 1, &caculate_Points::receive_path_point,this);
+    sub_car_pos = p.subscribe("/odometry/filtered", 1, &caculate_Points::receive_odom,this);
+    // goal_sub = p.subscribe("/move_base_simple/goal", 1, &caculate_Points::goalCB, this);//订阅~
+    // sub_linear_x = p.subscribe("/control_vel_x",1,&caculate_Points::receive_vel,this);
+    // pub_cmd_vel = p.advertise<geometry_msgs::Twist>("/car/cmd_vel",1);
+    // pub_target_point = p.advertise<visualization_msgs::Marker>("car_path", 10);//发布~
+    pub_forword_point = p.advertise<nav_msgs::Path>("/forword_point", 1);
+    pub_forward_eta = p.advertise<std_msgs::Float64>("/forword_eta", 1);
+    //pub_global_path = p.advertise<nav_msgs::Path>("/global_path",1);
+
+
+    marker_pub = p.advertise<visualization_msgs::Marker>("visualization_marker", 10);
+    marker_pub2 = p.advertise<visualization_msgs::Marker>("visualization_marker2", 10);
+    curve_av_pub = p.advertise<std_msgs::Float64>("path_curve_av",1);
+    curve_av_turn_pub = p.advertise<std_msgs::Float64>("path_curve_turn_av",1);
+    path_jin_pub = p.advertise<nav_msgs::Path>("/forword_jin_point", 1);
+    mode_pub = p.advertise<std_msgs::Int32>("/mode", 1);
+    timer1 = p.createTimer(ros::Duration((0.1)/50), &caculate_Points::caculate_average_yaw, this); // Duration(0.05) -> 20Hz
+
+    // timer2 = n_.createTimer(ros::Duration((0.5)/50), &caculate_Points::goalReachingCB, this); // Duration(0.05) -> 20Hz
+
+    p.param("Vcmd", Vcmd, 1.0);
+    Lfw = getL1Distance(Vcmd);//这个参数的意义在于：若小车距离目标点的距离小于这个值，判断小车已经到达了，则不会选取那个点当作目标点
+    goal_received = false;
+    goal_reached = false;
+    foundForwardPt = false;
+
+    ROS_INFO("Run normally");
+     // __anthor__ = skywoodsz
+    fout.open("/home/zjj/core_data/path_k.txt");
+    fout_c.open("/home/zjj/core_data/path_c.txt");
+    // marker_pub = p.advertise<visualization_msgs::Marker>("visualization_marker", 10);
+    // curve_av_pub = p.advertise<std_msgs::Float64>("path_curve_av",1);
+    draw_txt_init();
+}
+
+void caculate_Points::caculate_average_yaw(const ros::TimerEvent&)
+{
+    geometry_msgs::Pose carPose = car_pose.pose.pose;
+
+    double eta = getEtas(carPose);
+    if(eta_weight_flag)
+    {
+        if(abs(eta*180/M_PI) > stright_eta_max && abs(eta*180/M_PI) < turning_eta)
+        {
+            eta = eta_weight*eta;
+        }
+    }
+    ROS_INFO("eta:%lf",eta*180/M_PI);
+
+   
+
+    // if(eta*180/M_PI > 30)
+    // {
+    //     eta += 45*M_PI/180;
+    // }
+    // else if(eta*180/M_PI < -20)
+    // {
+    //     eta -= 45*M_PI/180;
+    // }
+
+     string str = "the yaw = ";
+        draw_txt(0,car_pose.pose.pose.position.x,
+            car_pose.pose.pose.position.y,str,eta*180/M_PI,marker_pub);
+
+    eta = PID_control(eta);//计算出来的实际该给的角度值
+    // pub_cmd_vel.publish(cmd_vel);
+
+
+    std_msgs::Float64 send_eta;
+    send_eta.data = eta;
+
+    if(eta != -100)
+    {
+        pub_forward_eta.publish(send_eta);
+    }
+}
+
+void caculate_Points::goalReachingCB(const ros::TimerEvent&)
+{
+    if(goal_received)
+    {
+        double car2goal_dist = getCar2GoalDist();
+        if(car2goal_dist < Lfw)
+        {
+            goal_reached = true;//到达
+            goal_received = false;//收到目标
+            ROS_INFO("Goal Reached !");
+        }
+    }
+}
+
+double caculate_Points::getCar2GoalDist()
+{
+    geometry_msgs::Point car_position = car_pose.pose.pose.position;//car_pose代表小车自身的位置
+    double car2goal_x = odom_goal_pos.x - car_position.x;
+    double car2goal_y = odom_goal_pos.y - car_position.y;
+
+    double dist2goal = sqrt(car2goal_x*car2goal_x + car2goal_y*car2goal_y);
+
+    return dist2goal;
+}
+
+double caculate_Points::getL1Distance(const double& _Vcmd)
+{
+    double L1 = 0;
+    if(_Vcmd < 1.34)
+        L1 = 3 / 3.0;
+    else if(_Vcmd > 1.34 && _Vcmd < 5.36)
+        L1 = _Vcmd*2.24 / 3.0;
+    else
+        L1 = 12 / 3.0;
+    return L1;
+}
+
+int flag = 0;
+void caculate_Points::receive_path_point(const nav_msgs::Path::ConstPtr& pathMsg)//获取map坐标系下的路径点
+{
+    if(flag <= 5)
+    {
+        global_path = *pathMsg;
+        flag ++;
+    }
+    local_path = *pathMsg;
+    ROS_INFO("I receive path point:%ld",local_path.poses.size());
+
+    // pub_global_path.publish(global_path);
+    // ROS_INFO("I receive path point:%ld",local_path.poses.size());
+}
+
+void caculate_Points::receive_odom(const nav_msgs::Odometry::ConstPtr& odomMsg)//获取小车的odom下的坐标
+{
+    car_pose = *odomMsg;
+    // ROS_INFO("I receive car_pose");
+}
+
+void caculate_Points::goalCB(const geometry_msgs::PoseStamped::ConstPtr& goalMsg)//用来不断循环判断小车是否到达目标位置
+{
+    try
+    {
+        geometry_msgs::PoseStamped odom_goal;
+        listener.transformPose("odom", ros::Time(0) , *goalMsg, "map" ,odom_goal);//监听odom->map坐标变换
+        odom_goal_pos = odom_goal.pose.position;//odom坐标系的目标坐标
+        goal_received = true;//收到目标
+        goal_reached = false;//未到达目标
+
+        /*Draw Goal on RVIZ*/
+        goal_circle.pose = odom_goal.pose;
+        marker_pub.publish(goal_circle);
+    }
+    catch(tf::TransformException &ex)
+    {
+        ROS_ERROR("%s",ex.what());
+        ros::Duration(1.0).sleep();
+    }
+}
+
+void caculate_Points::receive_vel(const std_msgs::Float64 vel)
+{
+    cmd_vel.linear.x = vel.data;
+}
+
+//思路：首先找到前面的第一个点，然后多取前方几个点计算yaw值并给权重，调权重就可以了
+double caculate_Points::getEtas(const geometry_msgs::Pose& carPose)
+{
+    int first_point_index = find_forword_point(carPose);
+
+    // if(goal_reached)//如果到达了目标
+    // {
+    //     forwardPt = odom_goal_pos;
+    // }
+    // else
+    // {
+    //     forwardPt = first_point;
+    // }
+    // points.points.clear();
+    // line_strip.points.clear();
+    // if(foundForwardPt && !goal_reached)
+    // {
+    //     points.points.push_back(carPose.position);
+    //     points.points.push_back(forwardPt);
+    //     line_strip.points.push_back(carPose.position);
+    //     line_strip.points.push_back(forwardPt);
+    // }
+    // marker_pub.publish(points);
+    // marker_pub.publish(line_strip);
+
+    if(first_point_index != -1)
+    {
+        double average_yaw;
+        if(!flag)
+        {
+           average_yaw = caculate_average_yaw(first_point_index,step,num,carPose);
+           return average_yaw;
+        }
+        else
+        {
+        //    ROS_INFO("hello0");
+           average_yaw = auto_caculate_yaw(first_point_index,carPose);
+           return average_yaw;
+        }
+    }
+    else 
+    {
+        return -100;
+    }
+}
+
+/*找到小车前面的第一个点*/
+int caculate_Points::find_forword_point(const geometry_msgs::Pose& carPose)
+{
+    geometry_msgs::Point carPose_pos = carPose.position;//得到小车的位置
+    double car_theta = getYawFromPose(carPose);
+
+    geometry_msgs::Point first_forwardPt;//小车前面的第一个路径点
+    // geometry_msgs::Point odom_car2WayPtVec;//odom坐标系下的路径点
+    int first_index;//记录寻找的第一个目标点的下标
+
+    for(int i =0; i< local_path.poses.size(); i++)
+    {
+        geometry_msgs::PoseStamped local_path_pose = local_path.poses[i];//取出路径点数组里面的一个路径点,数据类型决定了要这样取点
+        geometry_msgs::PoseStamped odom_path_pose;//需要将map坐标系下的路径点转化为odom坐标系下的路径点
+
+        try
+        {
+            listener.transformPose("odom", ros::Time(0) , local_path_pose, "map" ,odom_path_pose);//坐标系转换，由于现在运行出错，实际运行再试验
+            geometry_msgs::Point odom_path_wayPt = odom_path_pose.pose.position;
+            // geometry_msgs::Point odom_path_wayPt = local_path_pose.pose.position;
+            bool _isForwardWayPt = isForwardWayPt(odom_path_wayPt,carPose);
+            if(_isForwardWayPt)
+            {
+                bool _isWayPtAwayFromLfwDist = isWayPtAwayFromLfwDist(odom_path_wayPt,carPose_pos);
+                if(_isWayPtAwayFromLfwDist)
+                {
+                    first_index = i;
+                    first_point = odom_path_wayPt;
+                    foundForwardPt =true;
+                    return first_index;
+                }
+            }
+        }
+        catch (tf::TransformException &ex)
+        {
+            ROS_ERROR("%s",ex.what());
+            ros::Duration(1.0).sleep();
+        }
+    }
+    foundForwardPt = false;
+    return -1;
+}
+
+/*以下是通过手动设置采样点数，采样步长来计算均值的*/ 
+double caculate_Points::caculate_average_yaw(unsigned int first_point_index,unsigned int step,unsigned int num,const geometry_msgs::Pose& carPose)
+{
+    geometry_msgs::Point carPose_pos = carPose.position;//小车odom下的坐标
+
+    double carPose_yaw = getYawFromPose(carPose);
+    double yaw_all = 0;//转角总值
+    double yaw_one_time = 0;//每一次计算得到的转角值
+
+    geometry_msgs::Point odom_car2WayPtVec;//odom坐标系下的路径点
+
+    for(int i=first_point_index; i<(first_point_index+step*num); i = i+step)
+    {
+        geometry_msgs::PoseStamped local_path_pose = local_path.poses[i];
+        geometry_msgs::PoseStamped odom_path_pose;
+
+        try
+        {
+            listener.transformPose("odom", ros::Time(0) , local_path_pose, "map" ,odom_path_pose);//map_path_pose为输入，odom_path_pose为输出，误差矫正坐标转换
+            geometry_msgs::Point odom_path_wayPt = odom_path_pose.pose.position;
+            // geometry_msgs::Point odom_path_wayPt = local_path_pose.pose.position;
+
+            odom_car2WayPtVec.x = cos(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + sin(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
+            odom_car2WayPtVec.y = -sin(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + cos(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
+            yaw_one_time = atan2(odom_car2WayPtVec.y,odom_car2WayPtVec.x);
+            yaw_all += yaw_one_time;
+        }
+        catch (tf::TransformException &ex)
+        {
+            ROS_ERROR("%s",ex.what());
+            ros::Duration(1.0).sleep();
+        }
+    }
+
+    return yaw_all/num;
+}
+
+/*以下是根据设置的前瞻距离自动计算采样点数的*/
+double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const geometry_msgs::Pose& carPose)
+{
+    geometry_msgs::Point carPose_pos = carPose.position;
+    double carPose_yaw = getYawFromPose(carPose);
+    double yaw_all = 0;//转角总值
+    double yaw_one_time = 0;//每一次计算得到的转角值
+    double all_distance = 0;
+    int times = 0;//用来计数取了多少个点
+
+    int size = local_path.poses.size();
+    Eigen::VectorXd every_point_yaw(size);
+
+    geometry_msgs::Point last_path_point = carPose_pos;//第一个原始点
+    geometry_msgs::Point odom_car2WayPtVec;//odom坐标系下的路径点
+
+    Forword_path_point.poses.clear();
+    Forword_path_point.header = car_pose.header;
+
+    for(int i = first_point_index; i< local_path.poses.size(); i += step)
+    {
+        geometry_msgs::PoseStamped local_path_pose = local_path.poses[i];
+        //Forword_path_point.poses[j++] = local_path.poses[i];
+        geometry_msgs::PoseStamped odom_path_pose;
+
+        try
+        {
+            listener.transformPose("odom", ros::Time(0) , local_path_pose, "map" ,odom_path_pose);//map_path_pose为输入，odom_path_pose为输出，误差矫正坐标转换
+            
+            Forword_path_point.poses.push_back(odom_path_pose);
+
+            geometry_msgs::Point odom_path_wayPt = odom_path_pose.pose.position;
+
+            // if(i == first_point_index)//计算选取的第一个路径点距离小车的距离
+            // {
+            //     ROS_INFO("distance:%lf",sqrt((odom_path_wayPt.x-carPose_pos.x)*(odom_path_wayPt.x-carPose_pos.x)+(odom_path_wayPt.y-carPose_pos.y)*(odom_path_wayPt.y-carPose_pos.y)));
+            // }
+
+            odom_car2WayPtVec.x = cos(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + sin(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
+            odom_car2WayPtVec.y = -sin(carPose_yaw)*(odom_path_wayPt.x - carPose_pos.x) + cos(carPose_yaw)*(odom_path_wayPt.y - carPose_pos.y);
+            yaw_one_time = atan2(odom_car2WayPtVec.y,odom_car2WayPtVec.x);
+            // yaw_all += yaw_one_time;
+
+            every_point_yaw(times) = yaw_one_time;       
+            times++;
+
+            all_distance += sqrt((odom_path_wayPt.x-last_path_point.x)*(odom_path_wayPt.x-last_path_point.x) + (odom_path_wayPt.y-last_path_point.y)*(odom_path_wayPt.y-last_path_point.y));
+            if(all_distance >= forword_distance)break;
+            last_path_point = odom_path_wayPt;
+        }
+        catch (tf::TransformException &ex)
+        {
+            ROS_ERROR("%s",ex.what());
+            ros::Duration(1.0).sleep();
+        }
+        
+    }
+    pub_forword_point.publish(Forword_path_point);//发布前瞻选取的路径点
+    //
+    /*
+     double car_x = carPose_pos.x;
+    double car_y = carPose_pos.y;
+    double path_x = Forword_path_point.poses[0].pose.position.x;
+    double path_y = Forword_path_point.poses[0].pose.position.y;
+    double dis = pow(pow((car_x-path_x),2) + pow((car_y-path_y),2),0.5);
+    geometry_msgs::Pose pose;
+    pose.position.x = path_x;
+    pose.position.y = path_y;
+    pose.position.z = 1;
+    ostringstream str;
+    str<<"the path_dis_! = "<<dis;
+    visual_txt.text=str.str();
+    visual_txt.pose = pose;
+    //marker_pub.publish(visual_txt);
+    */
+
+
+    // int size2 = Forword_path_point.poses.size();
+    Eigen::VectorXd path_k_(times);
+    every_point_yaw.conservativeResize(times);
+    path_k_ = To_caculate_weight();
+    
+    ROS_INFO("Forword_path_point:%ld",Forword_path_point.poses.size());
+    // ROS_INFO("every_point_yaw.dot(path_k_):%lf",every_point_yaw.dot(path_k_));
+    // ROS_INFO("times:%d",times);
+    /*
+    double yaw_wight = every_point_yaw.dot(path_k_);
+    //geometry_msgs::Pose pose;
+    pose.position.x = Forword_path_point.poses[10].pose.position.x;
+    pose.position.y = Forword_path_point.poses[10].pose.position.y;
+    pose.position.z = 1;
+    //ostringstream str;
+    str<<"the yaw = "<<yaw_wight*180/M_PI;
+    marker_pub4.text=str.str();
+    marker_pub4.pose = pose;
+    //marker_pub.publish(marker_pub4);
+    */
+    return every_point_yaw.dot(path_k_);
+
+}
+
+
+double caculate_Points::getYawFromPose(const geometry_msgs::Pose& carPose)
+{
+    float x = carPose.orientation.x;
+    float y = carPose.orientation.y;
+    float z = carPose.orientation.z;
+    float w = carPose.orientation.w;
+
+    double tmp,yaw;
+    tf::Quaternion q(x,y,z,w);
+    tf::Matrix3x3 quaternion(q);
+    quaternion.getRPY(tmp,tmp, yaw);
+
+    return yaw;
+}
+ 
+/*下面为判断是不是前面的路径点，为一个关键程序,传参需要同一个坐标系下的小车坐标和路径点坐标*/
+bool caculate_Points::isForwardWayPt(const geometry_msgs::Point& wayPt, const geometry_msgs::Pose& carPose)
+{
+    float car2wayPt_x = wayPt.x - carPose.position.x;
+    float car2wayPt_y = wayPt.y - carPose.position.y;
+    double car_theta = getYawFromPose(carPose);
+
+    float car_car2wayPt_x = cos(car_theta)*car2wayPt_x + sin(car_theta)*car2wayPt_y;//已经证明了
+    float car_car2wayPt_y = -sin(car_theta)*car2wayPt_x + cos(car_theta)*car2wayPt_y;
+
+    if(car_car2wayPt_x >0) /*is Forward WayPt*/
+        return true;
+    else
+        return false;
+}
+
+/*下面为判断是否到了这个路径点*/
+bool caculate_Points::isWayPtAwayFromLfwDist(const geometry_msgs::Point& wayPt, const geometry_msgs::Point& car_pos)
+{
+    double dx = wayPt.x - car_pos.x;
+    double dy = wayPt.y - car_pos.y;
+    double dist = sqrt(dx*dx + dy*dy);//dist为小车目前点与路径点的位置
+
+    if(dist < Lfw)
+        return false;
+    else if(dist >= Lfw)
+        return true;
+}
+
+/*舵机转角PID*/
+/*
+分多种路况的PID参数：
+    点阵：(曲率特别大)
+    直道：
+*/
+double caculate_Points::PID_control(const double Angle_fact)
+{
+    steering_PID.now_error = Angle_fact*180/M_PI;//弧度制转角度制
+
+    steering_PID.Td = car_pose.twist.twist.linear.x*(-0.2) + 0.7;
+    steering_PID.Kp = car_pose.twist.twist.linear.x*0.25 + 0.75;
+
+    std_msgs::Int32 mode;
+    mode.data = 0;
+    if(auto_PID_param)
+    {
+        if(c_turn_av < 50 && c_av - c_turn_av < 50)//直道模式，全速冲刺
+        {
+            steering_PID.Kp = 1.6;
+            steering_PID.Td = 0.25;
+            
+            mode.data = 1;
+            
+        }
+        else if(c_turn_av > 100 && c_av - c_turn_av < 50)//入弯直道,先低速再高速，先降速
+        {
+            steering_PID.Kp = 1.2;
+            steering_PID.Td = 0;
+
+            mode.data = 2;
+        }
+        else if(c_turn_av < 50 && c_av - c_turn_av > 100)//出弯直道,先高速，再低速，先降速
+        {
+            steering_PID.Kp = 1.2;
+            steering_PID.Td = 0.0;
+
+           mode.data = 3;
+            
+        }
+        else if(c_turn_av > 100 && c_av -c_turn_av > 100)//过点阵模式,最低速度运行
+        {
+            steering_PID.Kp = 2.0;
+            steering_PID.Td = 0.0;
+
+            mode.data = 4;
+        }
+        else if(c_turn_av > 100 && c_av - c_turn_av > 100)//近处小弯，远处大弯,高速到低速
+        {
+            steering_PID.Kp = 1.2;
+            steering_PID.Td = 0.0;
+
+            mode.data = 5;
+             
+        }
+        else if(c_turn_av > 100 && c_av - c_turn_av >50)//近处大弯，远处小弯，低速到高速
+        {
+            steering_PID.Kp = 1.2;
+            steering_PID.Td = 0.0;
+
+           
+            mode.data = 6;
+             
+        }
+        mode_pub.publish(mode);
+        // steering_PID.Kp = 1.25;
+        // steering_PID.Td = 0.0;
+
+        // if(curcature >= 2)
+        // {
+        //     steering_PID.Kp = 2.0;
+        //     steering_PID.Td = 0.0;
+        // }
+        // else if(curcature < 1)
+        // {
+        //     if(car_pose.twist.twist.linear.x < 1.8)
+        //     {
+        //         steering_PID.Kp = 1.2;
+        //         steering_PID.Td = 0.0;
+        //     }
+        //     steering_PID.Kp = 1.6;
+        //     steering_PID.Td = 0.25;
+        // }
+        // else
+        // {
+        //     if(car_pose.twist.twist.linear.x < 1.8)
+        //     {
+        //         steering_PID.Kp = 1.2;
+        //         steering_PID.Td = 0.0;
+        //     }
+        //     steering_PID.Kp = 1.6;
+        //     steering_PID.Td = 0.25;
+        // }
+    }
+
+    /*输入限幅,由于舵机只能打到-45度和45度*/
+    if(steering_PID.now_error < -45)
+    {
+        steering_PID.now_error = -45;
+    }
+    else if(steering_PID.now_error > 45)
+    {
+        steering_PID.now_error = 45;
+    }
+
+    steering_PID.Angle_output = steering_PID.Kp*steering_PID.now_error + steering_PID.Kp*steering_PID.Td*(steering_PID.now_error - steering_PID.last_error)/steering_PID.T;
+
+    /*输出限幅*/
+    if(steering_PID.Angle_output < -45)
+    {
+        steering_PID.Angle_output = -45;
+    }
+    else if(steering_PID.Angle_output > 45)
+    {
+        steering_PID.Angle_output = 45;
+    }
+
+
+    // if(steering_PID.now_error < 0)//意味着右拐
+    // {
+    //     steering_PID.Angle_output = steering_PID.Kp*steering_PID.now_error + steering_PID.Kp*steering_PID.Td*(steering_PID.now_error - steering_PID.last_error)/steering_PID.T;
+
+    //     if (steering_PID.Angle_output < -45)
+    //     {map_jin_path
+    //         steering_PID.Angle_output = -45;
+    //     }
+    //     else if(steering_PID.Angle_output > 0)
+    //     {
+    //         steering_PID.Angle_output = 0;
+    //     }
+
+    // }
+    // else if(steering_PID.now_error > 0)
+    // {
+    //     steering_PID.Angle_output = steering_PID.Kp*steering_PID.now_error + steering_PID.Kp*steering_PID.Td*(steering_PID.now_error - steering_PID.last_error)/steering_PID.T;
+
+    //     if(steering_PID.Angle_output > 45)
+    //     {
+    //         steering_PID.Angle_output = 45;
+    //     }
+    //     else if(steering_PID.Angle_output <0 )
+    //     {
+    //         steering_PID.Angle_output = 0;
+    //     }
+    // }
+
+    //进行前后误差的工作交接，保存3次误差
+    steering_PID.pre_error = steering_PID.last_error;
+    steering_PID.last_error = steering_PID.now_error;
+
+    steering_PID.turn_output = (int)(10.0/9.0*steering_PID.Angle_output + 90);
+
+    return steering_PID.turn_output;//返回的值为40到140
+}
+
+
+
+
+
+
+
+
+
+
+
+
+// __anthor__ = skywoodsz
+Eigen::VectorXd caculate_Points::To_caculate_weight()
+{
+    ROS_INFO("you have seted the weight!");
+    std::cout<<"you have seted the weight!"<<std::endl;
+    nav_msgs::Path map_path = Forword_path_point;
+    nav_msgs::Path map_jin_path;
+    map_jin_path.header = Forword_path_point.header;
+    //nav_msgs::Path map_path = local_path;
+    int size = map_path.poses.size();
+    Eigen::VectorXd path_k(size); //权重 
+    Eigen::VectorXd path_k_dis(size); 
+    if(size != 0)
+    {
+        double path_x,path_y; // 路径xy
+        double path_curve_x[3] = {0},path_curve_y[3] = {0};
+        double car_odom_x = car_pose.pose.pose.position.x;  //小车xy
+        double car_odom_y = car_pose.pose.pose.position.y;
+        double path_dis = 0;    //路径据小车距离
+        double curve = 0; //曲率
+        int c_j = 0,c_turn_j = 0;
+        Eigen::VectorXd path_c_av(size); 
+        Eigen::VectorXd path_c_turn_av(size);
+        for(int i = 0;i<size;i++)
+        {
+            path_x = map_path.poses[i].pose.position.x;
+            path_y = map_path.poses[i].pose.position.y;
+            //距离权重 平方拟合
+            double dis = pow((car_odom_x - path_x),2) + pow((car_odom_y - path_y),2);
+            double dis_true = pow(dis,0.5);
+            //曲率
+            if(i<size-3 && size>3)
+            {
+                path_curve_x[0] = map_path.poses[i].pose.position.x;
+                path_curve_x[1] = map_path.poses[i+1].pose.position.x;
+                path_curve_x[2] = map_path.poses[i+2].pose.position.x;
+
+                path_curve_y[0] = map_path.poses[i].pose.position.y;
+                path_curve_y[1] = map_path.poses[i+1].pose.position.y;
+                path_curve_y[2] = map_path.poses[i+2].pose.position.y;
+
+                curve = To_caculate_curve(path_curve_x,path_curve_y);
+                c_j++;
+                path_c_av(i) = abs(curve);
+                if(dis_true < 1.5)
+                {
+                    path_c_turn_av(i) = abs(curve); 
+                    c_turn_j++;
+                    map_jin_path.poses.push_back(map_path.poses[i]);
+                }
+
+            }
+            if(dis > dis_yuan)
+            {
+                path_k(i) = k_dis_yuan * 1/dis + k_sigma * curve;
+                //std::cout<<"2m!!!!!!"<<std::endl;
+            }
+            else
+            {
+                path_k(i) = k_dis * 1/dis + k_sigma * curve;
+            }
+            path_k_dis(i) = dis_true;
+        }
+            
+        //归一化
+        path_k = path_k/path_k.sum();   //前瞻权重
+        cout<<"path_k.size() = "<<path_k.size()<<endl;
+        std::cout<<"waha!"<<std::endl;
+        //std::cout<<"path_k.sum() = "<<path_k.sum()<<std::endl;
+        // 3m
+        path_c_av.conservativeResize(c_j);  //平均曲率
+        //path_c_av = path_c_av/path_c_av.size();
+        cout<<"path_c_av.size() = "<<path_c_av.size()<<endl;
+        c_av = path_c_av.sum();
+        cout<<"path_c_av = "<<c_av<<endl;
+        //1m
+        path_c_turn_av.conservativeResize(c_turn_j);
+        //path_c_turn_av = path_c_turn_av/path_c_turn_av.size();
+        c_turn_av = path_c_turn_av.sum();
+        cout<<"path_c_turn_av = "<<c_turn_av<<endl;
+
+        fout_c<<"/********path_c_av********path_c_turn_av*********/"<<endl;
+        fout_c<<c_av<<"  "<<c_turn_av<<endl;
+        
+        // 可视化
+        string str = "the path_c_av = ";
+        //draw_txt(1,map_path.poses[0].pose.position.x,
+            //map_path.poses[0].pose.position.y,str,c_av,marker_pub);
+
+        str = "the c_turn_av = ";
+        //draw_txt(2,map_path.poses[10].pose.position.x,
+            //map_path.poses[10].pose.position.y,str,c_turn_av,marker_pub);
+
+        std_msgs::Float64 c_av_to,c_turn_av_to;
+        c_av_to.data = c_av;
+        c_turn_av_to.data = c_turn_av;
+        curve_av_pub.publish(c_av_to); 
+        curve_av_turn_pub.publish(c_turn_av_to);
+
+        path_jin_pub.publish(map_jin_path);
+        /*
+        geometry_msgs::Pose pose;
+        pose.position.x = map_path.poses[0].pose.position.x;
+        pose.position.y = map_path.poses[0].pose.position.y;
+        pose.position.z = 1;
+        ostringstream str;
+        str<<"the path_c_av = "<<c_av;
+        visual_txt.text=str.str();
+        visual_txt.pose = pose;
+        marker_pub.publish(visual_txt);
+
+        std_msgs::Float64 c_av_to;
+        curcature = c_av_to.data = c_av;
+        curve_av_pub.publish(c_av_to);
+        
+        pose.position.x = map_path.poses[5].pose.position.x;
+        pose.position.y = map_path.poses[5].pose.position.y;
+        pose.position.z = 1;
+
+        str<<" Lfw = "<<Lfw;
+        visual_txt2.text=str.str();
+        visual_txt2.pose = pose;
+        marker_pub.publish(visual_txt2);
+        */
+
+        if(path_k.sum() == 1)
+        {
+            std::cout<<"right!"<<std::endl;
+            count++;
+            
+            //fout.open("/home/zjj/core_data/path_k.txt");
+            fout<<"/********path_k***********dis********/"<<count<<endl;
+            for(int i = 0 ;i<path_k.size();i++)
+            {
+                fout<<path_k(i)<<"  "<<path_k_dis(i)<<endl;
+            }
+            //fout.close();
+
+            //fout<< path_k_2 <<endl;
+        }
+        else
+        {
+            std::cout<<"error! path_k_sum != 1"<<std::endl;
+            std::cout<<path_k.sum()<<std::endl;
+        }
+    }
+    return path_k;
+}
+// 三角外切圆曲率计算
+// k = 1/r = 4S/(abc)
+inline double caculate_Points::To_caculate_curve(const double path_x[],const double path_y[])
+{
+    double path_S_2 = (path_x[1] - path_x[0]) * (path_y[2] - path_y[0])
+                     - (path_x[2] - path_x[0]) * (path_y[1] - path_y[0]);
+    double path_L_1 = pow((path_x[0] - path_x[1]),2) + pow(path_y[0] - path_y[1],2);
+    double path_L_2 = pow((path_x[1] - path_x[2]),2) + pow(path_y[1] - path_y[2],2);
+    double path_L_3 = pow((path_x[0] - path_x[2]),2) + pow(path_y[0] - path_y[2],2);
+    double path_L_1_pow = pow(path_L_1,0.5);
+    double path_L_2_pow = pow(path_L_2,0.5);
+    double path_L_3_pow = pow(path_L_3,0.5);
+    
+    //曲率
+    double path_c = 2 * path_S_2 / (path_L_1_pow * path_L_2_pow * path_L_3_pow);
+    return path_c;
+}
+
+inline void caculate_Points::draw_txt(int id,double x,double y,string s,double num,ros::Publisher pub)
+{
+  visualization_msgs::Marker visual_temp;
+
+  visual_temp.header.frame_id = "/map";
+  visual_temp.header.stamp = ros::Time::now();
+  visual_temp.ns = "points_and_txt";
+  visual_temp.id = id;
+  visual_temp.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+  visual_temp.scale.z = 0.3;
+  visual_temp.color.b = 1.0;
+  visual_temp.color.a = 1;
+
+  geometry_msgs::Pose pose;
+  pose.position.x = x;
+  pose.position.y = y;
+  pose.position.z = 1;
+  ostringstream str;
+  str<<s<<num;
+  visual_temp.text=str.str();
+  visual_temp.pose = pose;
+  pub.publish(visual_temp);
+}
+void caculate_Points::draw_txt_init()
+{
+    
+    marker_pub3.header.frame_id = visual_txt2.header.frame_id = visual_txt.header.frame_id = "/map";
+    marker_pub3.header.stamp = visual_txt2.header.stamp = visual_txt.header.stamp = ros::Time::now();
+    marker_pub3.ns = visual_txt2.ns = visual_txt.ns = "points_and_txt";
+    marker_pub3.action = visual_txt2.action = visual_txt.action = visualization_msgs::Marker::ADD;
+    marker_pub3.pose.orientation.w = visual_txt2.pose.orientation.w = visual_txt.pose.orientation.w = 1.0;
+
+    visual_txt.id = 0;
+    visual_txt2.id = 1;
+    marker_pub3.id = 2;
+
+    //points.type = visualization_msgs::Marker::POINTS;
+    visual_txt.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+    visual_txt2.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+    marker_pub3.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+    // POINTS markers use x and y scale for width/height respectively
+    // points.scale.x = 0.1;
+    // points.scale.y = 0.1;
+
+    visual_txt.scale.z = 0.3;
+    visual_txt2.scale.z = 0.3;
+    marker_pub3.scale.z = 0.3;
+    // Points are green
+    // points.color.g = 1.0f;
+    // points.color.a = 1.0;
+
+    marker_pub3.color.b =  visual_txt2.color.b = visual_txt.color.b = 1.0;
+    marker_pub3.color.a = visual_txt2.color.a = visual_txt.color.a = 1;
+    marker_pub4 = marker_pub3;
+    marker_pub4.id = 3;
+    std::cout<<"maker_init scuseed!"<<std::endl;
+    
+}
+
+int main(int argc, char *argv[])
+{
+    ros::init(argc, argv, "Search_Point");
+    ros::NodeHandle n;
+    caculate_Points task;
+
+    int step;
+    int num;
+    bool flag;
+    double forword_distance;
+    double Lfw;
+    double steer_Kp,steer_Td,T;//转角PID系数中间值
+    bool auto_PID_param;
+    // bool eta_weight_flag;
+    // double eta_weight,stright_eta_max,turning_eta;
+
+    double k_dis; //距离权重
+    double k_dis_yuan;
+    double k_v ;   //速度权重
+    double k_sigma;  //曲率权重
+
+    n.getParam("/Search/step",step);
+    n.getParam("/Search/num",num);
+    n.getParam("/Search/flag",flag);
+    n.getParam("/Search/forword_distance",forword_distance);
+    n.getParam("/Search/Lfw",Lfw);
+    n.getParam("/Search/steer_Kp",steer_Kp);
+    n.getParam("/Search/steer_Td",steer_Td);
+    n.getParam("/Search/T",T);
+    n.getParam("/Search/auto_PID_param",auto_PID_param);
+    // n.getParam("/Search/eta_weight",eta_weight);
+    // n.getParam("/Search/stright_eta_max",stright_eta_max);
+    // n.getParam("/Search/turning_eta",turning_eta);    
+    // n.getParam("/Search/eta_weight_flag",eta_weight_flag); 
+    
+    n.getParam("/Search/k_dis",k_dis);
+    n.getParam("/Search/k_dis_yuan",k_dis_yuan);
+    n.getParam("/Search/k_v",k_v);    
+    n.getParam("/Search/k_sigma",k_sigma); 
+
+    task.step = step;
+    task.num = num;
+    task.flag = flag;
+    task.forword_distance = forword_distance;
+    task.Lfw = Lfw;
+    task.steering_PID.Kp = steer_Kp;
+    task.steering_PID.Td = steer_Td;
+    task.steering_PID.T = T;
+    task.auto_PID_param = auto_PID_param;
+    // task.eta_weight = eta_weight;
+    // task.stright_eta_max = stright_eta_max;
+    // task.turning_eta = turning_eta;
+    // task.eta_weight_flag = eta_weight_flag;
+
+    task.k_dis = k_dis;
+    task.k_dis_yuan = k_dis_yuan;
+    task.k_v = k_v;
+    task.k_sigma = k_sigma;
+
+    ROS_INFO("step:%d",task.step);
+    ROS_INFO("num:%d",task.num);
+    ROS_INFO("forword_distance:%lf",task.forword_distance);
+    ROS_INFO("Lfw:%lf",task.Lfw);
+    // ROS_INFO("eta_weight:%lf",task.eta_weight);
+    // ROS_INFO("stright_eta_max:%lf",task.stright_eta_max);
+    // ROS_INFO("turning_eta:%lf",task.turning_eta);
+
+    // task.initMarker();
+
+    ros::spin();
+    return 0;
+}
+
+
