@@ -19,7 +19,7 @@ public:
         car_sub_ = n_.subscribe("/odometry/filtered", 1, &TO_MODE::receive_odom,this);
         curve_sub_ = n_.subscribe("path_curve_av",1,&TO_MODE::receive_curve,this);
         
-        timer1 = n_.createTimer(ros::Duration((0.1/10)), &TO_MODE::to_cal_mode, this); // 100hz
+        timer1 = n_.createTimer(ros::Duration((0.1/50)), &TO_MODE::to_cal_mode, this); // 500hz
     }
     ~TO_MODE()
     {
@@ -70,6 +70,9 @@ public:
         * mode = 1；第一弯道
         * mode = 2; 第二弯道
         * mode = 3; 180度  
+        * mode = 4; 第三弯道
+        * mode = 5; 第四弯道
+        * mode = 6; 点阵/3筒
         */
         double dis = 0;
         if(is_inited)
@@ -79,19 +82,44 @@ public:
             double car_pose_x = car_pose.pose.pose.position.x;
             double car_pose_y = car_pose.pose.pose.position.y;
             dis = pow(pow(car_pose_x-car_pose_init_x,2) + pow(car_pose_y-car_pose_init_y,2),0.5);
-            
-            if(dis>wan1_ru && dis<wan1_chu)
+            // 外if不可用else
+            if(dis < wan180) 
             {
-                mode = 1;
-            }
-            if(dis>wan2_ru && dis<wan2_chu)
-            {
-                mode = 2;
+                if(flag_180 == 0)
+                {
+                    if(dis>wan1_ru && dis<wan1_chu)
+                    {
+                        mode = 1;
+                    }
+                    if(dis>wan2_ru && dis<wan2_chu)
+                    {
+                        mode = 2;
+                    }
+                }
+                else
+                {
+                    if(dis>wan3_ru && dis<wan3_chu)
+                    {
+                        mode = 4;
+                    }
+                    if(dis>wan4_ru && dis<wan4_chu)
+                    {
+                        mode = 5;
+                    }
+                }
             }
             if(dis>wan180)
             {
                 mode = 3;
+                flag_180 = 1;
             }
+            //曲率
+
+            if(curve>2)
+            {
+                mode = 6;
+            }
+
 
             std_msgs::Int32 st_mode;
             st_mode.data = mode;
@@ -134,10 +162,11 @@ public:
     tf::TransformListener listener_;
     bool is_inited = false;
     ros::Timer timer1;
+    int flag_180 = 0;
 
     double curve;
     double car_pose_init_x,car_pose_init_y;
-    double wan1_ru,wan1_chu,wan2_ru,wan2_chu,wan180;
+    double wan1_ru,wan1_chu,wan2_ru,wan2_chu,wan180,wan3_ru,wan3_chu,wan4_ru,wan4_chu;
     double curve_wan1,curve_dianzhen;
     
 };
@@ -148,7 +177,7 @@ int main(int argc, char **argv)
 
     TO_MODE to_mode;
 
-    double wan1_ru,wan1_chu,wan2_ru,wan2_chu,wan180;
+    double wan1_ru,wan1_chu,wan2_ru,wan2_chu,wan180,wan3_ru,wan3_chu,wan4_ru,wan4_chu;
     double curve_wan1,curve_dianzhen;
 
     n.getParam("/mode/wan1_ru",wan1_ru);
@@ -157,12 +186,22 @@ int main(int argc, char **argv)
     n.getParam("/mode/wan2_chu",wan2_chu);
     n.getParam("/mode/wan180",wan180);
 
+    n.getParam("/mode/wan3_ru",wan3_ru);
+    n.getParam("/mode/wan3_chu",wan3_chu);
+    n.getParam("/mode/wan4_ru",wan3_ru);
+    n.getParam("/mode/wan4_chu",wan3_chu);
+    
+
     to_mode.wan1_ru = wan1_ru;
     to_mode.wan1_chu = wan1_chu;
     to_mode.wan2_ru = wan2_ru;
     to_mode.wan2_chu = wan2_chu;
     to_mode.wan180 = wan180;
-
+    to_mode.wan3_ru = wan3_ru;
+    to_mode.wan3_chu = wan3_chu;
+    to_mode.wan4_ru = wan4_ru;
+    to_mode.wan4_chu = wan4_chu;
+    
     ros::spin();
     return 0;
 }

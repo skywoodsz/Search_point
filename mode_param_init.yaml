@@ -1,5 +1,18 @@
+# 弯道顺序
+# |---180---|
+# |         |
+# 2         3
+# |         |
+# 1         4
+# jin      chu
+
 wan1_ru: 4.0
 wan1_chu: 8.5
 wan2_ru: 17.5
 wan2_chu: 22.5
 wan180: 24.5
+wan3_ru: 0
+wan3_chu: 0
+wan4_ru: 0
+wan4_chu: 0
+
