@@ -6,15 +6,15 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Int32.h>
-#define STOP_DIST 0.5
-#define STOP_ANGLE 5
+//#define STOP_DIST 0.5
+//#define STOP_ANGLE 5
 #define STOP_POINT 4
 
 #define TURN_ANGLE_MIN 5
 #define TURN_ANGLE_MAX 15
 #define TURN_POINT_MIN 3
 #define TURN_POINT_MAX 7
-#define TURN_DIST 1.23
+#define TURN_DIST 0.5
 
 class laser_stop{
 public:
@@ -34,9 +34,21 @@ public:
     {
 
     }
-    void modeCallBack(const)
+    void modeCallBack(const std_msgs::Int32::ConstPtr modeMsg)
     {
-
+        std_msgs::Int32 mode_ros = *modeMsg;
+        int mode = mode_ros.data;
+        //180
+        if(mode == 3)
+        {
+            STOP_DIST = 0.8;
+            STOP_ANGLE = 20;
+        }
+        else
+        {
+            STOP_DIST = 0.5;
+            STOP_ANGLE = 5;
+        }
     }
     void ScanCallBack(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     {
@@ -137,6 +149,8 @@ public:
     std_msgs::Bool is_stop_;
     std_msgs::Bool is_right_;
     std_msgs::Bool is_left_;
+
+    int STOP_DIST,STOP_ANGLE;
 };
 
 
