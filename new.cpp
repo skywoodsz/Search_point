@@ -1,3 +1,7 @@
+
+
+
+
 #include "ros/ros.h"
 #include "nav_msgs/Path.h" 
 #include "nav_msgs/Odometry.h"
@@ -55,7 +59,7 @@ class caculate_Points
         double forword_distance_ahead;//近处路径距离
         bool flag;//True代表根据前瞻距离自动计算,false代表手动设置
 
-        double Lfw,Vcmd;
+        double Lfw,Vcmd;//lfw为选取作为前进的目标点距离小车的距离
 
         bool auto_PID_param;//是否开启自动变化的PID
         typedef struct
@@ -169,14 +173,14 @@ caculate_Points::caculate_Points()//相关参数的初始化
     // sub_path_point = p.subscribe("/move_base/TrajectoryPlannerROS/local_plan", 1, &caculate_Points::receive_path_point,this);
     // sub_car_pos = p.subscribe("/odom", 1, &caculate_Points::receive_odom,this);
 
-    sub_path_point = p.subscribe("/move_base/NavfnROS/plan", 1, &caculate_Points::receive_path_point,this);
-    sub_car_pos = p.subscribe("/odometry/filtered", 1, &caculate_Points::receive_odom,this);
+    sub_path_point = p.subscribe("/move_base/NavfnROS/plan", 1, &caculate_Points::receive_path_point,this);//接收路径点
+    sub_car_pos = p.subscribe("/odometry/filtered", 1, &caculate_Points::receive_odom,this);//接收小车位姿
     // goal_sub = p.subscribe("/move_base_simple/goal", 1, &caculate_Points::goalCB, this);//订阅~
     // sub_linear_x = p.subscribe("/control_vel_x",1,&caculate_Points::receive_vel,this);
     // pub_cmd_vel = p.advertise<geometry_msgs::Twist>("/car/cmd_vel",1);
     // pub_target_point = p.advertise<visualization_msgs::Marker>("car_path", 10);//发布~
-    pub_forword_point = p.advertise<nav_msgs::Path>("/forword_point", 1);
-    forword_distance_ahead_pub = p.advertise<nav_msgs::Path>("/forword_point_ahead",1);
+    pub_forword_point = p.advertise<nav_msgs::Path>("/forword_point", 1);//发布前瞻点
+    forword_distance_ahead_pub = p.advertise<nav_msgs::Path>("/forword_point_ahead",1);//发布近处前瞻点
 
     pub_forward_eta = p.advertise<std_msgs::Float64>("/forword_eta", 1);
     //pub_global_path = p.advertise<nav_msgs::Path>("/global_path",1);
@@ -223,14 +227,14 @@ void caculate_Points::caculate_average_yaw(const ros::TimerEvent&)
 
    
 
-    if(eta*180/M_PI > 30)
-    {
-        eta += 45*M_PI/180;
-    }
-    else if(eta*180/M_PI < -20)
-    {
-        eta -= 45*M_PI/180;
-    }
+    // if(eta*180/M_PI > 30)//棒棒
+    // {
+    //     eta += 45*M_PI/180;
+    // }
+    // else if(eta*180/M_PI < -20)
+    // {
+    //     eta -= 45*M_PI/180;
+    // }
 
     //  string str = "the yaw = ";
     //     draw_txt(0,car_pose.pose.pose.position.x,
@@ -485,7 +489,6 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
     for(int i = first_point_index; i< local_path.poses.size(); i += step)
     {
         geometry_msgs::PoseStamped local_path_pose = local_path.poses[i];
-        //Forword_path_point.poses[j++] = local_path.poses[i];
         geometry_msgs::PoseStamped odom_path_pose;
 
         try
@@ -529,11 +532,9 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
         }
         
     }
-    pub_forword_point.publish(Forword_path_point);//发布前瞻选取的路径点
+    //pub_forword_point.publish(Forword_path_point);//发布前瞻选取的路径点
     forword_distance_ahead_pub.publish(Forword_path_point_ahead);
 
-    // ROS_INFO("times:%d",times);
-    //
     /*
      double car_x = carPose_pos.x;
     double car_y = carPose_pos.y;
@@ -560,6 +561,10 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
     ROS_INFO("Forword_path_point_ahead:%ld",Forword_path_point_ahead.poses.size());
     // ROS_INFO("every_point_yaw.dot(path_k_):%lf",every_point_yaw.dot(path_k_));
     // ROS_INFO("times:%d",times);
+
+
+
+
     /*
     double yaw_wight = every_point_yaw.dot(path_k_);
     //geometry_msgs::Pose pose;
@@ -572,6 +577,9 @@ double caculate_Points::auto_caculate_yaw(unsigned int first_point_index,const g
     marker_pub4.pose = pose;
     //marker_pub.publish(marker_pub4);
     */
+
+
+
     return every_point_yaw.dot(path_k_);
     // return 0;
 
@@ -624,9 +632,11 @@ bool caculate_Points::isWayPtAwayFromLfwDist(const geometry_msgs::Point& wayPt, 
 
 /*舵机转角PID*/
 /*
-分多种路况的PID参数：
+分多种路况的PID参数(包括转角和变速)：
     点阵：(曲率特别大)
-    直道：
+    中低速过障碍物：
+    高速过障碍物：
+    过180度大弯
 */
 double caculate_Points::PID_control(const double Angle_fact)
 {
@@ -890,12 +900,12 @@ Eigen::VectorXd caculate_Points::To_caculate_weight()
         
         // 可视化
         string str = "the path_c_av = ";
-        draw_txt(1,map_path.poses[0].pose.position.x,
-            map_path.poses[0].pose.position.y,str,c_av,marker_pub);
+        // draw_txt(1,map_path.poses[0].pose.position.x,
+        //     map_path.poses[0].pose.position.y,str,c_av,marker_pub);
 
         str = "the c_turn_av = ";
-        draw_txt(2,map_path.poses[10].pose.position.x,
-            map_path.poses[10].pose.position.y,str,c_turn_av,marker_pub);
+        // draw_txt(2,map_path.poses[10].pose.position.x,
+        //     map_path.poses[10].pose.position.y,str,c_turn_av,marker_pub);
 
         std_msgs::Float64 c_av_to,c_turn_av_to;
         c_av_to.data = c_av;
@@ -1108,7 +1118,4 @@ int main(int argc, char *argv[])
 
 
 
-
-
-// /**/
 
