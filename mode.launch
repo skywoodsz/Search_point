@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+
+<launch>
+    <master auto="start" />
+    <node pkg="collect_path_point" type="mode" name="mode" output="screen" >
+        <rosparam file="$(find collect_path_point)/config/mode_param_init.yaml" command="load" />
+    </node>
+</launch>
