@@ -6,6 +6,11 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Int32.h>
+
+#include <sensor_msgs/LaserScan.h>
+#include <pcl/point_cloud.h>
+#include <pcl_ros/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
 //#define STOP_DIST 0.5
 //#define STOP_ANGLE 5
 #define STOP_POINT 4
@@ -18,7 +23,7 @@
 
 #define DIANZHEN_ANGLE 26
 #define DIANZHEN_DIST 2 
-#define DIANZHEN_POINT 8
+#define DIANZHEN_POINT 10
 #define DIANZHEN_POINT_MAX 100
 class laser_stop{
 public:
@@ -26,6 +31,7 @@ public:
     {
         scan_sub_ = nh_.subscribe("/scan",10,&laser_stop::ScanCallBack,this);
         mode_sub_ = nh_.subscribe("/mode",10,&laser_stop::modeCallBack,this);
+        pcl_pub_ = nh_.advertise<sensor_msgs::PointCloud2> ("scan_filter_pcl",1);
         stop_pub_ = nh_.advertise<std_msgs::String> ("stop",1);
         is_stop_pub_ = nh_.advertise<std_msgs::Bool> ("/is_stop",1);
         is_right_pub_ = nh_.advertise<std_msgs::Bool> ("/is_right",1);
@@ -61,7 +67,12 @@ public:
     {
     sensor_msgs::LaserScan laserScanMsg = *scan_msg;
     int beamNum = laserScanMsg.ranges.size();
-    
+    int dianzhen_cout_ = 0;
+
+    cloud_.width = beamNum;
+    cloud_.height = 1;
+    cloud_.points.resize(cloud_.width * cloud_.height);
+
     std::vector<double> angles,ranges;
     for(int i = 0;i<beamNum;i++)
     {
@@ -69,7 +80,42 @@ public:
         double lidar_angles = laserScanMsg.angle_min + i * laserScanMsg.angle_increment;
         ranges.push_back(lidar_lists);
         angles.push_back(lidar_angles);
+        double px = lidar_lists * cos(lidar_angles);
+        double py = lidar_lists * sin(lidar_angles);
+        if (py<0.5 && py>-0.5)
+        {
+            if(0< px < 1.9)
+            {
+                dianzhen_cout_++;
+                cloud_.points[i].x = px;
+                cloud_.points[i].y = py;
+                cloud_.points[i].z = 1.0;
+                std::cout<<"the px = "<<px<<std::endl;
+                std::cout<<"the py = "<<py<<std::endl;
+                std::cout<<"/************/"<<std::endl;
+            }
+        }
+        else
+        {
+            cloud_.points[i].x = std::numeric_limits<float>::infinity();
+            cloud_.points[i].y = std::numeric_limits<float>::infinity();
+            cloud_.points[i].z = 1.0;
+        }
+
     }
+    pcl::toROSMsg(cloud_,pcl_output_);
+    pcl_output_.header.frame_id = "laser";
+    pcl_output_.header.stamp = laserScanMsg.header.stamp;
+    pcl_pub_.publish(pcl_output_);
+    if(dianzhen_cout_ > DIANZHEN_POINT)
+    {
+        is_dianzhen_.data = true;
+    }
+    else
+    {
+        is_dianzhen_.data = false;
+    }
+
     int stop_cout_ = 0;
     std::cout<<"/************/"<<std::endl;
     for(int i = STOP_ANGLE;i>-STOP_ANGLE;i--)
@@ -143,31 +189,12 @@ public:
      //is_left_pub_.publish(is_left_);
      //is_right_pub_.publish(is_right_);
     std::cout<<"/***********************/"<<std::endl;
-    int dianzhen_cout_ = 0;
+   
     
-    for(int i = DIANZHEN_ANGLE;i>-DIANZHEN_ANGLE;i--)
-    {
-        if(i >= 0)
-        {
-            if(ranges[i] < DIANZHEN_DIST)
-               dianzhen_cout_++;
-            std::cout<<"range= "<<i<<" "<<ranges[i]<<std::endl;
-        }
-        else
-        {
-            if(ranges[360+i] < DIANZHEN_DIST)
-                dianzhen_cout_++;
-            std::cout<<"range= "<<i<<" "<<ranges[360+i]<<std::endl;
-        }
-        
-    }
     
     
     std::cout<<"dianzhen_cout_ = "<<dianzhen_cout_<<std::endl;
-    if(dianzhen_cout_ > DIANZHEN_POINT && dianzhen_cout_ < DIANZHEN_POINT_MAX)
-    {
-        is_dianzhen_.data = true;
-    }
+
     is_dianzhen_pub_.publish(is_dianzhen_);
     
 }
@@ -175,7 +202,7 @@ public:
 public:
     ros::NodeHandle nh_;
     ros::Subscriber scan_sub_,mode_sub_; 
-    ros::Publisher stop_pub_;
+    ros::Publisher stop_pub_,pcl_pub_;
     ros::Publisher is_stop_pub_;
     ros::Publisher is_right_pub_;
     ros::Publisher is_left_pub_;
@@ -187,6 +214,9 @@ public:
     std_msgs::Bool is_dianzhen_;
 
     int STOP_DIST = 0.5,STOP_ANGLE = 5;
+
+    pcl::PointCloud<pcl::PointXYZ> cloud_;
+    sensor_msgs::PointCloud2 pcl_output_;
 };
 
 
