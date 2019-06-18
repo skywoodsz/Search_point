@@ -1,0 +1,199 @@
+#include <iostream>
+#include <std_msgs/Int32.h>
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+#include "sensor_msgs/LaserScan.h"
+#include <std_msgs/String.h>
+#include <std_msgs/Bool.h>
+#include <std_msgs/Int32.h>
+//#define STOP_DIST 0.5
+//#define STOP_ANGLE 5
+#define STOP_POINT 4
+
+#define TURN_ANGLE_MIN 5
+#define TURN_ANGLE_MAX 15
+#define TURN_POINT_MIN 3
+#define TURN_POINT_MAX 7
+#define TURN_DIST 0.5
+
+#define DIANZHEN_ANGLE 26
+#define DIANZHEN_DIST 2 
+#define DIANZHEN_POINT 8
+#define DIANZHEN_POINT_MAX 100
+class laser_stop{
+public:
+    laser_stop()
+    {
+        scan_sub_ = nh_.subscribe("/scan",10,&laser_stop::ScanCallBack,this);
+        mode_sub_ = nh_.subscribe("/mode",10,&laser_stop::modeCallBack,this);
+        stop_pub_ = nh_.advertise<std_msgs::String> ("stop",1);
+        is_stop_pub_ = nh_.advertise<std_msgs::Bool> ("/is_stop",1);
+        is_right_pub_ = nh_.advertise<std_msgs::Bool> ("/is_right",1);
+        is_left_pub_ = nh_.advertise<std_msgs::Bool> ("/is_left",1);
+        is_dianzhen_pub_ = nh_.advertise<std_msgs::Bool> ("/is_dianzhen",1);
+        is_stop_.data = false;
+        is_left_.data = false;
+        is_right_.data = false;
+        is_dianzhen_.data = false;
+
+    }
+    ~laser_stop()
+    {
+
+    }
+    void modeCallBack(const std_msgs::Int32::ConstPtr modeMsg)
+    {
+        std_msgs::Int32 mode_ros = *modeMsg;
+        int mode = mode_ros.data;
+        //180
+        if(mode == 3)
+        {
+            STOP_DIST = 0.8;
+            STOP_ANGLE = 20;
+        }
+        else
+        {
+            STOP_DIST = 0.5;
+            STOP_ANGLE = 5;
+        }
+    }
+    void ScanCallBack(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
+    {
+    sensor_msgs::LaserScan laserScanMsg = *scan_msg;
+    int beamNum = laserScanMsg.ranges.size();
+    
+    std::vector<double> angles,ranges;
+    for(int i = 0;i<beamNum;i++)
+    {
+        double lidar_lists = laserScanMsg.ranges[i];
+        double lidar_angles = laserScanMsg.angle_min + i * laserScanMsg.angle_increment;
+        ranges.push_back(lidar_lists);
+        angles.push_back(lidar_angles);
+    }
+    int stop_cout_ = 0;
+    std::cout<<"/************/"<<std::endl;
+    for(int i = STOP_ANGLE;i>-STOP_ANGLE;i--)
+    {
+        if(i >= 0)
+        {
+            if(ranges[i] < STOP_DIST)
+               stop_cout_++;
+            //std::cout<<"range= "<<i<<" "<<ranges[i]<<std::endl;
+        }
+        else
+        {
+            if(ranges[360+i] < STOP_DIST)
+                stop_cout_++;
+            //std::cout<<"range= "<<i<<" "<<ranges[360+i]<<std::endl;
+        }
+        
+    }
+    //std::cout<<"stop_cout= "<<stop_cout_<<std::endl;
+    if(stop_cout_ >= STOP_POINT)
+    {
+        is_stop_.data = true;
+        /*
+        std_msgs::String stop_str;
+        std::stringstream ss;
+        ss<<"car_stop";
+        stop_str.data = ss.str();
+        stop_pub_.publish(stop_str);
+        */
+        //std::cout<<"car_stop"<<std::endl;
+    }
+    else
+    {
+        is_stop_.data = false;
+    }
+    is_stop_pub_.publish(is_stop_);
+
+    double right_cout = 0;
+    double left_cout = 0;
+    for(int i = TURN_ANGLE_MIN ;i<TURN_ANGLE_MAX;i++)
+    {
+        if(ranges[i]<TURN_DIST)
+            left_cout++;
+        //std::cout<<"left_range= "<<i<<" "<<ranges[i]<<std::endl;
+        
+        if(ranges[360-i]<TURN_DIST)
+            right_cout++;
+        //std::cout<<"right_range= "<<i<<" "<<ranges[i]<<std::endl;
+        
+    }
+    //std::cout<<"right_cout= "<<right_cout<<std::endl;
+    //std::cout<<"left_cout= "<<left_cout<<std::endl;
+
+    if(right_cout>TURN_POINT_MIN && right_cout<TURN_POINT_MAX && right_cout>left_cout)
+    {
+        is_left_.data = true;
+       
+        //std::cout<<"car left!"<<std::endl;
+    }
+    else if(left_cout>TURN_POINT_MIN && left_cout<TURN_POINT_MAX && left_cout>right_cout)
+    {
+        is_right_.data = true;
+        
+        //std::cout<<"car right!"<<std::endl;
+    }
+    else
+    {
+        is_right_.data = false;
+        is_left_.data = false;
+    }
+     //is_left_pub_.publish(is_left_);
+     //is_right_pub_.publish(is_right_);
+    std::cout<<"/***********************/"<<std::endl;
+    int dianzhen_cout_ = 0;
+    
+    for(int i = DIANZHEN_ANGLE;i>-DIANZHEN_ANGLE;i--)
+    {
+        if(i >= 0)
+        {
+            if(ranges[i] < DIANZHEN_DIST)
+               dianzhen_cout_++;
+            std::cout<<"range= "<<i<<" "<<ranges[i]<<std::endl;
+        }
+        else
+        {
+            if(ranges[360+i] < DIANZHEN_DIST)
+                dianzhen_cout_++;
+            std::cout<<"range= "<<i<<" "<<ranges[360+i]<<std::endl;
+        }
+        
+    }
+    
+    
+    std::cout<<"dianzhen_cout_ = "<<dianzhen_cout_<<std::endl;
+    if(dianzhen_cout_ > DIANZHEN_POINT && dianzhen_cout_ < DIANZHEN_POINT_MAX)
+    {
+        is_dianzhen_.data = true;
+    }
+    is_dianzhen_pub_.publish(is_dianzhen_);
+    
+}
+
+public:
+    ros::NodeHandle nh_;
+    ros::Subscriber scan_sub_,mode_sub_; 
+    ros::Publisher stop_pub_;
+    ros::Publisher is_stop_pub_;
+    ros::Publisher is_right_pub_;
+    ros::Publisher is_left_pub_;
+    ros::Publisher is_dianzhen_pub_;
+
+    std_msgs::Bool is_stop_;
+    std_msgs::Bool is_right_;
+    std_msgs::Bool is_left_;
+    std_msgs::Bool is_dianzhen_;
+
+    int STOP_DIST = 0.5,STOP_ANGLE = 5;
+};
+
+
+int main(int argc,char** argv)
+{
+    ros::init(argc, argv, "stop");
+    laser_stop my_laser_stop;
+    ros::spin();
+    return 0;
+}
