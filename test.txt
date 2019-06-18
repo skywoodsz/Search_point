@@ -227,3 +227,10 @@ int main(int argc,char** argv)
     ros::spin();
     return 0;
 }
+
+find_package(PCL REQUIRED)
+include_directories(
+  include ${PCL_INCLUDE_DIRS}
+)
+link_directories(${PCL_LIBRARY_DIRS})
+${PCL_LIBRARIES}
