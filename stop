@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <std_msgs/Int32.h>
 #include "ros/ros.h"
@@ -6,15 +7,26 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Int32.h>
+#include <std_msgs/Float64.h>
+
+#include <tf/transform_listener.h>
+#include <costmap_2d/costmap_2d_ros.h>
+#include <dwa_local_planner/dwa_planner_ros.h>
+
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Twist.h>
+
+#include <nav_msgs/Odometry.h>
 //#define STOP_DIST 0.5
 //#define STOP_ANGLE 5
-#define STOP_POINT 4
+#define STOP_POINT 9
+#define OBS_POINT 5
 
-#define TURN_ANGLE_MIN 5
-#define TURN_ANGLE_MAX 15
-#define TURN_POINT_MIN 3
-#define TURN_POINT_MAX 7
-#define TURN_DIST 0.5
+// #define TURN_ANGLE_MIN 5
+// #define TURN_ANGLE_MAX 15
+#define TURN_POINT_MIN 7
+#define TURN_POINT_MAX 50
+// #define TURN_DIST 0.6
 
 class laser_stop{
 public:
@@ -22,36 +34,149 @@ public:
     {
         scan_sub_ = nh_.subscribe("/scan",10,&laser_stop::ScanCallBack,this);
         mode_sub_ = nh_.subscribe("/mode",10,&laser_stop::modeCallBack,this);
+        eta_sub_ = nh_.subscribe("/forword_eta",10,&laser_stop::etaCallBack,this);
+        //car_sub_ = nh_.subscribe("/odometry/filtered", 1, &laser_stop::receive_odom,this);
+        cmd_vel_sub_ = nh_.subscribe("/cmd_vel", 1, &laser_stop::receive_cmd_vel,this);
+        yaw_sub_ = nh_.subscribe("/forword_eta",1,&laser_stop::receive_yaw,this); 
+
         stop_pub_ = nh_.advertise<std_msgs::String> ("stop",1);
+        
+
         is_stop_pub_ = nh_.advertise<std_msgs::Bool> ("/is_stop",1);
         is_right_pub_ = nh_.advertise<std_msgs::Bool> ("/is_right",1);
         is_left_pub_ = nh_.advertise<std_msgs::Bool> ("/is_left",1);
+        is_obs_pub_ = nh_.advertise<std_msgs::Bool> ("/is_obs",1);
+
+        is_turn_left_pub_ = nh_.advertise<std_msgs::Bool>("/is_turn_left",1);
+        is_turn_right_pub_ = nh_.advertise<std_msgs::Bool>("/is_turn_right",1);
+
         is_stop_.data = false;
         is_left_.data = false;
         is_right_.data = false;
+        is_obs_.data = false;
+
+        is_turn_right_.data = false;
+        is_turn_left_.data = false; 
+
+        STOP_ANGLE = 10;
+        STOP_DIST = 0.6;
+
+        OBS_ANGLE = 10; 
+        OBS_DIST = 1.0;
+
+        TURN_ANGLE_MIN =  10;
+        TURN_ANGLE_MAX = 45; //30 40
+        TURN_DIST = 0.6;
+        
+        stop_angle_max = STOP_ANGLE;
+        stop_angle_min = -STOP_ANGLE;
+        obs_angle_max = OBS_ANGLE; // 右
+        obs_angle_min = -OBS_ANGLE; // 左
+        left_angle_min = TURN_ANGLE_MIN;
+        left_angle_max = TURN_ANGLE_MAX;
+        right_angle_min = TURN_ANGLE_MIN;
+        right_angle_max = TURN_ANGLE_MAX;
+        
+        yaw_pwm = 90; //40~140
+        
     }
     ~laser_stop()
     {
 
+    }
+    void etaCallBack(const std_msgs::Float64::ConstPtr etaMsg)
+    {
+        std_msgs::Float64 eta_ros = *etaMsg;
+        double eta = eta_ros.data;
+        /*
+        if(eta < -10) //右转
+        {
+            stop_angle_min =-STOP_ANGLE;
+            stop_angle_max = TURN_ANGLE_MAX;
+            obs_angle_min = -OBS_ANGLE;
+            obs_angle_max = TURN_ANGLE_MAX;
+            left_angle_min = TURN_ANGLE_MIN;
+            left_angle_max = TURN_ANGLE_MIN; // 无左转判断
+            right_angle_min = TURN_ANGLE_MIN;
+            right_angle_max = TURN_ANGLE_MAX; 
+        }
+        else if(eta > 10) //左转
+        {
+            stop_angle_min =-TURN_ANGLE_MAX;
+            stop_angle_max = STOP_ANGLE;
+            obs_angle_min = -TURN_ANGLE_MAX;
+            obs_angle_max = OBS_ANGLE;
+            right_angle_min = TURN_ANGLE_MIN;
+            right_angle_max = TURN_ANGLE_MIN; // 无右转判断
+            left_angle_min = TURN_ANGLE_MIN;
+            left_angle_max = TURN_ANGLE_MAX;
+        }
+        else // 直行
+        {
+            stop_angle_max = STOP_ANGLE;
+            stop_angle_min = -STOP_ANGLE;
+            obs_angle_max = OBS_ANGLE; // 右
+            obs_angle_min = -OBS_ANGLE; // 左
+            left_angle_min = TURN_ANGLE_MIN;
+            left_angle_max = TURN_ANGLE_MAX;
+            right_angle_min = TURN_ANGLE_MIN;
+            right_angle_max = TURN_ANGLE_MAX;
+        }
+        */
     }
     void modeCallBack(const std_msgs::Int32::ConstPtr modeMsg)
     {
         std_msgs::Int32 mode_ros = *modeMsg;
         int mode = mode_ros.data;
         //180
-        if(mode == 3)
+        if(mode == 0)
         {
+            /*
             STOP_DIST = 0.8;
-            STOP_ANGLE = 20;
+            STOP_ANGLE = 10;
+
+            OBS_ANGLE = 10; 
+            OBS_DIST = 1.2;
+
+            TURN_DIST = 0.8;
+            */
+
+            STOP_DIST = STOP_DIST_HIGH;
+            OBS_DIST = OBS_DIST_HIGH;
+            TURN_DIST = TURN_DIST_HIGH;
         }
         else
         {
-            STOP_DIST = 0.5;
-            STOP_ANGLE = 5;
-        }
+            // 低速参数
+            //STOP_DIST = 0.6;
+            /*
+            STOP_DIST = 0.6;
+            STOP_ANGLE = 10;
+
+            OBS_ANGLE = 10; 
+            OBS_DIST = 1.0;
+
+            TURN_DIST = 0.6;
+            */
+
+            STOP_DIST = STOP_DIST_LOW;
+            OBS_DIST = OBS_DIST_LOW;
+            TURN_DIST = TURN_DIST_LOW;
+        } 
     }
     void ScanCallBack(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     {
+
+        stop_angle_max = STOP_ANGLE;
+        stop_angle_min = -STOP_ANGLE;
+        obs_angle_max = OBS_ANGLE; // 右
+        obs_angle_min = -OBS_ANGLE; // 左
+        left_angle_min = TURN_ANGLE_MIN;
+        left_angle_max = TURN_ANGLE_MAX;
+        right_angle_min = TURN_ANGLE_MIN;
+        right_angle_max = TURN_ANGLE_MAX;
+
+
     sensor_msgs::LaserScan laserScanMsg = *scan_msg;
     int beamNum = laserScanMsg.ranges.size();
     
@@ -63,36 +188,42 @@ public:
         ranges.push_back(lidar_lists);
         angles.push_back(lidar_angles);
     }
+    // 停障判断
     int stop_cout_ = 0;
-    std::cout<<"/************/"<<std::endl;
-    for(int i = STOP_ANGLE;i>-STOP_ANGLE;i--)
+    //std::cout<<"the stop angle_max = "<<stop_angle_max<<std::endl;
+    //std::cout<<"the stop angle_min = "<<stop_angle_min<<std::endl;
+    //std::cout<<"the stop dist = "<<STOP_DIST<<std::endl;
+    //std::cout<<"the obs dist = "<<OBS_DIST<<std::endl;
+    for(int i =stop_angle_max;i>stop_angle_min;i--)
     {
+        //std::cout<<"hello"<<std::endl;
         if(i >= 0)
         {
-            if(ranges[i] < STOP_DIST)
-               stop_cout_++;
-            std::cout<<"range= "<<i<<" "<<ranges[i]<<std::endl;
+            if(ranges[i] < STOP_DIST)  // 障碍物停障范围
+            {
+                stop_cout_++;
+            }         
+            //std::cout<<"range= "<<i<<" "<<ranges[i]<<std::endl;
         }
         else
         {
             if(ranges[360+i] < STOP_DIST)
+            {
                 stop_cout_++;
-            std::cout<<"range= "<<i<<" "<<ranges[360+i]<<std::endl;
+            }   
+            //std::cout<<"range= "<<i<<" "<<ranges[360+i]<<std::endl;
         }
         
     }
-    std::cout<<"stop_cout= "<<stop_cout_<<std::endl;
+    //std::cout<<"stop_cout= "<<stop_cout_<<std::endl;
+    //std::cout<<"stop_cout= "<<stop_cout_<<std::endl;
+    
+    //std::cout<<"/*************/"<<std::endl;
+
+    // 停障
     if(stop_cout_ >= STOP_POINT)
     {
         is_stop_.data = true;
-        /*
-        std_msgs::String stop_str;
-        std::stringstream ss;
-        ss<<"car_stop";
-        stop_str.data = ss.str();
-        stop_pub_.publish(stop_str);
-        */
-        std::cout<<"car_stop"<<std::endl;
     }
     else
     {
@@ -100,64 +231,216 @@ public:
     }
     is_stop_pub_.publish(is_stop_);
 
+
+    // 避障判断
+    int obs_cout_ = 0;
+    for(int i = obs_angle_max;i>obs_angle_min;i--)
+    {
+        if(i >= 0)
+        {
+            if(ranges[i] < OBS_DIST && ranges[i] > STOP_DIST)  // 障碍物避障范围
+            {
+                obs_cout_++;
+            }         
+            //std::cout<<"range= "<<i<<" "<<ranges[i]<<std::endl;
+        }
+        else
+        {
+            if(ranges[360+i] < OBS_DIST && ranges[i] > STOP_DIST )
+            {
+                obs_cout_++;
+            }   
+            //std::cout<<"range= "<<i<<" "<<ranges[360+i]<<std::endl;
+        }
+        
+    }
+    //std::cout<<"obs_cout= "<<obs_cout_<<std::endl;
+    // std::cout<<"/*************/"<<std::endl;
+    // 避障
+    if(obs_cout_ >= OBS_POINT && !is_stop_.data)
+    {
+        is_obs_.data = true;
+    }
+    else
+    {
+        is_obs_.data = false;
+    }
+    is_obs_pub_.publish(is_obs_);
+
+
+
+
+
     double right_cout = 0;
     double left_cout = 0;
-    for(int i = TURN_ANGLE_MIN ;i<TURN_ANGLE_MAX;i++)
+    for(int i = left_angle_min ;i<left_angle_max;i++)
     {
         if(ranges[i]<TURN_DIST)
             left_cout++;
-        std::cout<<"left_range= "<<i<<" "<<ranges[i]<<std::endl;
-        
-        if(ranges[360-i]<TURN_DIST)
-            right_cout++;
-        std::cout<<"right_range= "<<i<<" "<<ranges[i]<<std::endl;
-        
     }
-    std::cout<<"right_cout= "<<right_cout<<std::endl;
-    std::cout<<"left_cout= "<<left_cout<<std::endl;
+
+    for(int i = right_angle_min;i<right_angle_max;i++)
+    {
+        if(ranges[360-i]<TURN_DIST)
+        {
+            right_cout++;
+        }
+    }
+  
 
     if(right_cout>TURN_POINT_MIN && right_cout<TURN_POINT_MAX && right_cout>left_cout)
     {
         is_left_.data = true;
        
-        std::cout<<"car left!"<<std::endl;
+        // std::cout<<"car left!"<<std::endl;
     }
-    else if(left_cout>TURN_POINT_MIN && left_cout<TURN_POINT_MAX && left_cout>right_cout)
+    else if(left_cout>TURN_POINT_MIN && left_cout<TURN_POINT_MAX && left_cout>right_cout && !is_stop_.data)
     {
         is_right_.data = true;
         
-        std::cout<<"car right!"<<std::endl;
+        // std::cout<<"car right!"<<std::endl;
     }
     else
     {
         is_right_.data = false;
         is_left_.data = false;
     }
-     //is_left_pub_.publish(is_left_);
-     //is_right_pub_.publish(is_right_);
+    //std::cout<<"the right cout = "<<right_cout<<std::endl;
+    //std::cout<<"the left cout = "<<left_cout<<std::endl;
+    //std::cout<<"/*************/"<<std::endl;
+    
+    is_left_pub_.publish(is_left_);
+    is_right_pub_.publish(is_right_);
 
 }
+void receive_cmd_vel(const geometry_msgs::Twist::ConstPtr& cmd_velMsg)
+{
+    geometry_msgs::Twist cmd_vel = *cmd_velMsg;
+    if(is_obs_.data)
+    {
+        if(yaw_pwm <100 && yaw_pwm > 80) // 未有转角
+        {
+            ROS_ERROR("the  daw cmd_vel_angular_z = %lf",cmd_vel.angular.z);
+            
+            if(cmd_vel.angular.z > 0.1) // 5度/s
+            {
+                //左转
+                is_turn_left_.data = true;
+                is_turn_right_.data = false;
+                
+            }
+            else if(cmd_vel.angular.z < -0.1)
+            {
+                //右转
+                is_turn_right_.data = true;
+                is_turn_left_.data = false;
+            }
+        }
+        else
+        {
+            is_turn_right_.data = false;
+            is_turn_left_.data = false; 
+        }
+    }
+    else
+    {
+        is_turn_right_.data = false;
+        is_turn_left_.data = false; 
+    }
+    is_turn_left_pub_.publish(is_turn_left_);
+    is_turn_right_pub_.publish(is_turn_right_);
+}
+void receive_yaw(std_msgs::Float64::ConstPtr yawMsg)
+{
+    std_msgs::Float64 yaw_ros = *yawMsg;
+    yaw_pwm = yaw_ros.data;
 
+}
 public:
     ros::NodeHandle nh_;
-    ros::Subscriber scan_sub_,mode_sub_; 
+    ros::Subscriber scan_sub_,mode_sub_,eta_sub_,car_sub_,cmd_vel_sub_,yaw_sub_; 
     ros::Publisher stop_pub_;
     ros::Publisher is_stop_pub_;
     ros::Publisher is_right_pub_;
     ros::Publisher is_left_pub_;
+    ros::Publisher is_obs_pub_;
+
+    ros::Publisher is_turn_left_pub_;
+    ros::Publisher is_turn_right_pub_;
 
     std_msgs::Bool is_stop_;
     std_msgs::Bool is_right_;
     std_msgs::Bool is_left_;
 
-    int STOP_DIST,STOP_ANGLE;
+    std_msgs::Bool is_obs_;
+
+    std_msgs::Bool is_turn_left_;
+    std_msgs::Bool is_turn_right_;
+
+    int STOP_ANGLE,OBS_ANGLE,TURN_ANGLE_MIN,TURN_ANGLE_MAX;
+    int stop_angle_max,stop_angle_min,obs_angle_min,obs_angle_max,left_angle_min,left_angle_max,right_angle_min,right_angle_max;
+    double STOP_DIST,OBS_DIST,TURN_DIST;
+
+    double STOP_DIST_HIGH,OBS_DIST_HIGH,TURN_DIST_HIGH;
+    double STOP_DIST_LOW,OBS_DIST_LOW,TURN_DIST_LOW;
+
+    double yaw_pwm;
+
+
 };
 
 
 int main(int argc,char** argv)
 {
     ros::init(argc, argv, "stop");
+    ros::NodeHandle n;
     laser_stop my_laser_stop;
+
+    int STOP_ANGLE,OBS_ANGLE,TURN_ANGLE_MIN,TURN_ANGLE_MAX;
+
+    double STOP_DIST_HIGH,OBS_DIST_HIGH,TURN_DIST_HIGH;
+    double STOP_DIST_LOW,OBS_DIST_LOW,TURN_DIST_LOW;
+
+    n.getParam("/stop_3/STOP_ANGLE",STOP_ANGLE);
+    n.getParam("/stop_3/OBS_ANGLE",OBS_ANGLE);
+    n.getParam("/stop_3/TURN_ANGLE_MIN",TURN_ANGLE_MIN);
+    n.getParam("/stop_3/TURN_ANGLE_MAX",TURN_ANGLE_MAX);
+
+    n.getParam("/stop_3/STOP_DIST_HIGH",STOP_DIST_HIGH);
+    n.getParam("/stop_3/OBS_DIST_HIGH",OBS_DIST_HIGH);
+    n.getParam("/stop_3/TURN_DIST_HIGH",TURN_DIST_HIGH);
+
+    n.getParam("/stop_3/STOP_DIST_LOW",STOP_DIST_LOW);
+    n.getParam("/stop_3/OBS_DIST_LOW",OBS_DIST_LOW);
+    n.getParam("/stop_3/TURN_DIST_LOW",TURN_DIST_LOW);
+
+    my_laser_stop.STOP_ANGLE = STOP_ANGLE;
+    my_laser_stop.OBS_ANGLE = OBS_ANGLE;
+    my_laser_stop.TURN_ANGLE_MIN = TURN_ANGLE_MIN;
+    my_laser_stop.TURN_ANGLE_MAX = TURN_ANGLE_MAX;
+
+    my_laser_stop.STOP_DIST_HIGH = STOP_DIST_HIGH;
+    my_laser_stop.OBS_DIST_HIGH = OBS_DIST_HIGH;
+    my_laser_stop.TURN_DIST_HIGH = TURN_DIST_HIGH;
+
+    my_laser_stop.STOP_DIST_LOW = STOP_DIST_LOW;
+    my_laser_stop.OBS_DIST_LOW = OBS_DIST_LOW;
+    my_laser_stop.TURN_DIST_LOW = TURN_DIST_LOW;
+
+    ROS_INFO("the STOP_ANGLE = %d",my_laser_stop.STOP_ANGLE);
+    ROS_INFO("the OBS_ANGLE = %d",my_laser_stop.OBS_ANGLE);
+    ROS_INFO("the TURN_ANGLE_MIN = %d",my_laser_stop.TURN_ANGLE_MIN);
+    ROS_INFO("the TURN_ANGLE_MAX = %d", my_laser_stop.TURN_ANGLE_MAX);
+
+    ROS_INFO("the STOP_DIST_HIGH = %lf",my_laser_stop.STOP_DIST_HIGH);
+    ROS_INFO("the OBS_DIST_HIGH = %lf",my_laser_stop.OBS_DIST_HIGH);
+    ROS_INFO("the TURN_DIST_HIGH = %lf",my_laser_stop.TURN_DIST_HIGH);
+
+    ROS_INFO("the STOP_DIST_LOW = %lf",my_laser_stop.STOP_DIST_LOW);
+    ROS_INFO("the OBS_DIST_LOW = %lf",my_laser_stop.OBS_DIST_LOW);
+    ROS_INFO("the TURN_DIST_LOW = %lf",my_laser_stop.TURN_DIST_LOW);
+
+
     ros::spin();
     return 0;
 }
